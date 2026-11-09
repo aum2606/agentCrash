@@ -4,6 +4,7 @@ The API depends on ``Store`` only; the PostgreSQL implementation lives in ``stor
 wired in by the composition root. Methods are synchronous (decision D-019).
 """
 
+from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Literal, Protocol
 from uuid import UUID
@@ -112,6 +113,44 @@ class IdempotencyExpired(Exception):
 
 class QueueFull(Exception):
     """Admission cap reached."""
+
+
+class StaleFence(Exception):
+    """The caller's fencing token is no longer the attempt's active one (or the attempt closed)."""
+
+
+# Termination reasons a worker may report; ``worker_lost`` is written only by the reaper.
+WORKER_TERMINATIONS = (
+    "agent_completed",
+    "agent_error",
+    "budget_exceeded",
+    "deadline_exceeded",
+    "cancelled",
+)
+
+
+@dataclass(frozen=True)
+class Claim:
+    """A leased execute job and the fresh attempt created for it."""
+
+    job_id: UUID
+    run_id: UUID
+    attempt_id: UUID
+    ordinal: int
+    fencing_token: int
+    owner: str
+    lease_until: datetime
+
+
+@dataclass(frozen=True)
+class Reaped:
+    """One expired lease closed by the reaper. ``requeued`` False means attempts were exhausted
+    and the run is now ``error`` (INFRA_WORKER_LOST)."""
+
+    run_id: UUID
+    attempt_id: UUID
+    ordinal: int
+    requeued: bool
 
 
 class Store(Protocol):

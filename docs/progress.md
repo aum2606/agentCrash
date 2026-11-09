@@ -1,6 +1,31 @@
 # Progress ledger
 
-Last updated: 2026-11-09. Current milestone: **M1 implemented locally** (acceptance evidence below; CI has not run). M0 is likewise implemented locally with CI acceptance still open.
+Last updated: 2026-11-09. M0 and M1 are **accepted** (local evidence below plus CI green on `origin/main` @ `ad5e8df`, reported by the user; the run URL was not given to me and I could not view Actions). Current milestone: **M2, in progress** (slice 1 of 6 done).
+
+## M2: durable healthy execution (in progress)
+
+M2 has six tasks in IMPLEMENTATION.md. Only the first is partly done. **Nothing executes an agent yet; accepted runs still stay `queued` unless a test claims them.**
+
+**Done in slice 1** (`storage/queue.py`, `domain/ports.py`; decision D-025):
+- `JobQueue.claim_execute`: short transaction, `FOR UPDATE SKIP LOCKED`, new attempt, run fencing token +1, 30 s lease from PostgreSQL `now()`.
+- `JobQueue.heartbeat`: needs matching owner and token and an unexpired lease; an expired lease cannot be revived.
+- `JobQueue.reap_expired`: closes an expired open attempt as `worker_lost`, invalidates the token, and in the same transaction queues a fresh attempt or, at the cap of 2 attempts, sets the run `error`.
+- `lock_fenced_attempt` / `JobQueue.close_attempt`: stale tokens, other attempts' tokens and already-closed attempts raise `StaleFence`.
+
+**Evidence** (Windows host, PostgreSQL 18.6): `tests/integration/test_queue.py`, 16 tests, no sleeps: 8-way claim race gives exactly one attempt; 6 workers get 6 distinct jobs; a locked job does not block another worker; finished runs are never claimed; heartbeat owner/token/expiry rules; reaper requeue, idempotency and cap; stale worker fenced before and after reassignment; concurrent reapers requeue once; reaper racing a fenced close yields exactly one outcome. Mutation checks: removing `SKIP LOCKED` fails the lock test; removing the token comparison fails the stale-worker test. Full run: `agentcrash check` passes, 189 non-DB tests, 49 integration tests.
+
+**Found while testing:** my first reaper overwrote an attempt a worker had just closed (it did not re-check after taking the run lock); fixed and covered by the race test. A test leaked an open connection whose transaction blocked a later `TRUNCATE`, so the run hung until I stopped it; fixed. My first `SKIP LOCKED` test deadlocked itself when it failed; restructured.
+
+**Not done in M2:** worker process/supervisor and child runner, fixture cloning, invoice tools/CAS/receipts, gateway event writer, naive agent and graders, cancellation and deadlines, the M2 acceptance run (healthy run, kill worker after a write, duplicate delivery, cancel before/after write). Known gaps in slice 1:
+- An expired lease whose attempt was already closed is skipped by the reaper; the completion slice must mark such jobs `done`.
+- `cancel_requested` is not consulted yet.
+- `run_attempts.termination` has no database CHECK constraint; the values are enforced in code only.
+- No run `error_code` is stored (D-025).
+- Linux CI has not run these new tests.
+
+**Smallest next task:** the job completion path: one transaction under `lock_fenced_attempt` that closes the attempt, marks the job `done` and moves the run to `evaluating`, then a minimal worker loop (claim, heartbeat thread, no agent yet) with a test that kills the worker process mid-lease and checks the reaper recovers it.
+
+---
 
 ## M1: models, compiler, API shell, schema
 
@@ -48,7 +73,7 @@ All M1 tasks from IMPLEMENTATION.md are implemented, except generating the typed
 - Faults needing fixtures (stale snapshots, document injection, conflict patches) still fail with `UNKNOWN_REFERENCE` until M3; the mutation-pointer-vs-tool-schema check is also M3.
 - `Idempotency-Key` retention/tombstoning is only exercised by setting `tombstoned_at` in a test; the retention job is M7.
 
-**Smallest next task (M2):** add the job claim/lease/fencing transaction (`FOR UPDATE SKIP LOCKED`, new attempt, fencing token increment) in `storage/`, with an integration test where two workers race for one queued job behind a barrier and exactly one gets an attempt; then heartbeat and the reaper.
+**Smallest next task (M2):** done as slice 1; see the M2 section above.
 
 ---
 
@@ -90,7 +115,7 @@ All M1 tasks from IMPLEMENTATION.md are implemented, except generating the typed
 | Clean checkout installs from lock, imports package | Met locally (clean-copy rehearsal) |
 | Runs health endpoint and one meaningful smoke test | Met locally |
 | Starts PostgreSQL | Met locally (healthy, persistent) |
-| Passes static checks **in CI** | **Not met**: CI has never run (no remote). The same commands pass locally. |
+| Passes static checks **in CI** | Met: CI green on `origin/main` @ `ad5e8df` (user-reported) |
 | No secrets committed | Nothing is committed; `.env` is ignored and absent from the clean copy. No secret scanner was run. |
 | Progress/decision records | Done (this file, `docs/toolchain.md`, `DECISION_LOG.md`) |
 
@@ -106,4 +131,4 @@ All M1 tasks from IMPLEMENTATION.md are implemented, except generating the typed
 
 ## Next action
 
-Resolve O-002 (repository host and maintainers) so CI can run and M0/M1 can be accepted on evidence, then start M2 with the task named in the M1 section above.
+Continue M2 with the smallest next task named in the M2 section. Still open: CODEOWNERS rules (needs maintainer handle), license (O-003), branch protection.

@@ -3,9 +3,7 @@ pagination and the guarantee that accepting a run never executes anything."""
 
 import copy
 import json
-import threading
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
 from dataclasses import replace
 from typing import Any
 
@@ -21,7 +19,7 @@ from agentcrash.domain.registry import Registry
 from agentcrash.scenarios.loader import load_scenario_document
 from agentcrash.storage.store import PostgresStore
 
-from .helpers import ROOT
+from .helpers import ROOT, run_concurrently
 
 TOKEN = "i" * 43
 AUTH = {"Authorization": f"Bearer {TOKEN}"}
@@ -284,18 +282,6 @@ def test_tombstoned_key_is_gone_not_reexecuted(seeded: TestClient, engine: Engin
 def test_keys_are_scoped_per_key_not_global(seeded: TestClient, engine: Engine) -> None:
     a, b = post_run(seeded, key="a").json(), post_run(seeded, key="b").json()
     assert a["id"] != b["id"] and count(engine, "runs") == 2
-
-
-def run_concurrently(n: int, call: Callable[[int], Any]) -> list[Any]:
-    """Release ``n`` callers at the same instant with a barrier (no sleeps)."""
-    barrier = threading.Barrier(n)
-
-    def worker(i: int) -> Any:
-        barrier.wait(timeout=30)
-        return call(i)
-
-    with ThreadPoolExecutor(max_workers=n) as pool:
-        return list(pool.map(worker, range(n)))
 
 
 def test_concurrent_identical_creation_keys_yield_one_run_and_one_job(
