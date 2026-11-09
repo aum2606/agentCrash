@@ -132,6 +132,30 @@ def _within_limits(value: Any) -> str | None:
     return None
 
 
+def _json_too_deep(text: str) -> bool:
+    """Bracket depth outside strings, so json.loads never meets hostile nesting. Relying on its
+    RecursionError was platform-dependent: Linux reached the end of unclosed input first."""
+    depth = 0
+    in_string = escaped = False
+    for ch in text:
+        if in_string:
+            if escaped:
+                escaped = False
+            elif ch == "\\":
+                escaped = True
+            elif ch == '"':
+                in_string = False
+        elif ch == '"':
+            in_string = True
+        elif ch in "[{":
+            depth += 1
+            if depth > MAX_DEPTH:
+                return True
+        elif ch in "]}":
+            depth -= 1
+    return False
+
+
 def load_json_document(
     data: bytes, error: type[ValidationFailed] = ScenarioValidationError
 ) -> dict[str, Any]:
@@ -144,6 +168,8 @@ def load_json_document(
         text = data.decode("utf-8")
     except UnicodeDecodeError:
         raise _fail("INVALID_ENCODING", error=error) from None
+    if _json_too_deep(text):
+        raise _fail("DOCUMENT_TOO_DEEP", error=error)
 
     def pairs(items: list[tuple[str, Any]]) -> dict[str, Any]:
         out: dict[str, Any] = {}

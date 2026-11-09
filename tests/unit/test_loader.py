@@ -67,3 +67,20 @@ def test_diagnostics_do_not_echo_document_text() -> None:
         load_scenario_document(f"a: 1\na: {hostile_text}\n".encode())
     assert hostile_text not in str(err.value)
     assert all(hostile_text not in str(d) for d in err.value.details)
+
+
+def json_codes(data: bytes) -> list[str]:
+    with pytest.raises(ScenarioValidationError) as exc:
+        loader.load_json_document(data)
+    return [d.code for d in exc.value.details]
+
+
+def test_json_depth_is_rejected_before_parsing_so_it_is_platform_independent() -> None:
+    # Unclosed input must report depth, not INVALID_JSON, on every interpreter.
+    assert json_codes(b"[" * 5000) == ["DOCUMENT_TOO_DEEP"]
+    assert json_codes(b'{"a":' * 40 + b"1" + b"}" * 40) == ["DOCUMENT_TOO_DEEP"]
+
+
+def test_json_brackets_inside_strings_do_not_count_as_depth() -> None:
+    doc = loader.load_json_document(b'{"a": "' + b"[" * 500 + b'\\"[", "b": {"c": 1}}')
+    assert doc["b"] == {"c": 1}
