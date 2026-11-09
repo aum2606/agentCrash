@@ -1,0 +1,66 @@
+name: ci
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  static:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.6"
+      - run: uv sync --frozen --all-groups
+      - run: uv lock --check
+      - run: uv run agentcrash check
+
+  unit:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.6"
+      - run: uv sync --frozen --all-groups
+      - run: uv run pytest tests/unit tests/property tests/contract
+
+  postgres-integration:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          version: "0.11.6"
+      - run: uv sync --frozen --all-groups
+      - name: Start PostgreSQL from compose.yaml and wait for the health check
+        run: |
+          echo "POSTGRES_PASSWORD=$(openssl rand -hex 24)" > .env
+          docker compose up -d --wait postgres
+      - name: Empty database to head with the Alembic CLI, then seed
+        run: |
+          uv run alembic upgrade head
+          uv run agentcrash dev init
+      - name: Integration tests (real PostgreSQL, throwaway databases)
+        run: uv run pytest tests/integration
+      - name: Tear down
+        if: always()
+        run: docker compose down --volumes

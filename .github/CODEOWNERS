@@ -1,0 +1,6 @@
+# No maintainer identities are known yet (DECISION_LOG O-002), so no ownership rules are
+# active. Do not invent handles. Once the host/maintainers are decided, add rules such as:
+#   *                            @<owner>
+#   /src/agentcrash/execution/   @<owner>
+#   /src/agentcrash/evaluation/  @<owner>
+#   /migrations/                 @<owner>

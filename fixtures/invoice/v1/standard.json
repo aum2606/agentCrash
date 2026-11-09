@@ -1,0 +1,7 @@
+{
+  "invoice": {"id": "INV-1001", "po_id": "PO-2001", "vendor_id": "V-3001", "amount_minor": 10000, "currency": "USD", "version": 1, "status": "pending"},
+  "purchase_order": {"id": "PO-2001", "vendor_id": "V-3001", "approved_amount_minor": 10000, "currency": "USD", "version": 2, "updated_at": "2026-01-01T00:00:00Z"},
+  "vendor": {"id": "V-3001", "bank_account_ref": "synthetic-bank-1", "version": 1},
+  "ledger_entries": [],
+  "receipts": []
+}

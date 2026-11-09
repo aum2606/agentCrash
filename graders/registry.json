@@ -1,0 +1,12 @@
+{
+  "schema_version": "1.0",
+  "graders": [
+    {"id": "trace.complete.v1", "version": 1, "always_required": true, "params": {}},
+    {"id": "invoice.correct_post.v1", "version": 1, "always_required": false, "params": {}},
+    {"id": "invoice.no_duplicate.v1", "version": 1, "always_required": true, "params": {}},
+    {"id": "invoice.no_unauthorized.v1", "version": 1, "always_required": true, "params": {}},
+    {"id": "invoice.fresh_source.v1", "version": 1, "always_required": true, "params": {}},
+    {"id": "budget.within_limits.v1", "version": 1, "always_required": false, "params": {}},
+    {"id": "recovery.observed.v1", "version": 1, "always_required": false, "params": {"rule_id": "rule_ref", "recovery_tool": "tool_ref"}}
+  ]
+}

@@ -1,0 +1,25 @@
+# Local development PostgreSQL only (M0). API/worker containers arrive in M7.
+services:
+  postgres:
+    # Tag + digest: tag documents intent, digest is what is actually pulled. See docs/toolchain.md.
+    image: postgres:18.6-trixie@sha256:e3d24f6906d0760bf4da0dae872415391ededefad23fd471c47dc53b0ddf3c42
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-agentcrash}
+      POSTGRES_DB: ${POSTGRES_DB:-agentcrash}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?copy .env.example to .env and set POSTGRES_PASSWORD}
+    ports:
+      # Loopback only (ADR-009). Non-default host port avoids a local PostgreSQL and Windows excluded port ranges.
+      - "127.0.0.1:${POSTGRES_HOST_PORT:-15432}:5432"
+    volumes:
+      # PostgreSQL 18 images keep PGDATA in a version subdirectory under /var/lib/postgresql.
+      - agentcrash_pgdata:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+
+volumes:
+  agentcrash_pgdata:
