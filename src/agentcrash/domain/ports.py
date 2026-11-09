@@ -6,11 +6,12 @@ wired in by the composition root. Methods are synchronous (decision D-019).
 
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Annotated, Literal, Protocol
+from typing import Annotated, Any, Literal, Protocol
 from uuid import UUID
 
 from pydantic import Field
 
+from agentcrash.domain.evidence import Grade
 from agentcrash.domain.models import (
     CompiledScenario,
     Id,
@@ -65,6 +66,7 @@ class RunRecord(Strict):
     labels: dict[str, str]
     created_at: datetime
     completed_at: datetime | None
+    error_code: str | None = None  # additive (D-025): why a run ended in ``error``
 
 
 class ScenarioPage(Strict):
@@ -97,6 +99,53 @@ class ErrorBody(Strict):
 
 class ErrorEnvelope(Strict):
     error: ErrorBody
+
+
+class EventRecord(Strict):
+    schema_version: Literal["1.0"] = "1.0"
+    run_id: UUID
+    attempt_id: UUID
+    seq: int
+    type: str
+    wall_time: datetime
+    logical_time_ms: int
+    actor_id: str | None
+    call_id: str | None
+    trace_id: str | None = None
+    span_id: str | None = None
+    payload: dict[str, Any]
+    prev_hash: str
+    event_hash: str
+
+
+class EventPage(Strict):
+    items: list[EventRecord]
+    next_after_seq: int
+    has_more: bool
+    attempt_closed: bool
+
+
+class EvaluationRecord(Strict):
+    id: UUID
+    attempt_id: UUID
+    grader_set_hash: str
+    snapshot_hash: str | None
+    verdict: Verdict
+    grades: list[Grade]
+    evaluated_at: datetime
+
+
+class EvaluationList(Strict):
+    items: list[EvaluationRecord]
+
+
+class CancelResult(Strict):
+    run: RunRecord
+    accepted: bool  # False: the run was already terminal (HTTP 200 instead of 202)
+
+
+class AttemptNotInRun(Exception):
+    """The requested attempt does not belong to the run."""
 
 
 class ScenarioConflict(Exception):
@@ -143,6 +192,13 @@ class Claim:
 
 
 @dataclass(frozen=True)
+class GradeClaim:
+    job_id: UUID
+    run_id: UUID
+    attempt_id: UUID
+
+
+@dataclass(frozen=True)
 class Reaped:
     """One expired lease closed by the reaper. ``requeued`` False means attempts were exhausted
     and the run is now ``error`` (INFRA_WORKER_LOST)."""
@@ -183,6 +239,14 @@ class Store(Protocol):
         queue_cap: int,
     ) -> CreateRunResult: ...
     def get_run(self, run_id: UUID) -> RunRecord | None: ...
+    def cancel_run(self, run_id: UUID, reason: str | None) -> CancelResult | None: ...
+    def list_events(
+        self, run_id: UUID, attempt_id: UUID | None, after_seq: int, limit: int
+    ) -> EventPage | None: ...
+    def list_evaluations(
+        self, run_id: UUID, attempt_id: UUID | None
+    ) -> list[EvaluationRecord] | None: ...
+
     def list_runs(
         self, status: str | None, scenario_id: str | None, cursor: str | None, limit: int
     ) -> RunPage: ...

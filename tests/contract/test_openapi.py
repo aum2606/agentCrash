@@ -12,9 +12,9 @@ def spec() -> dict[str, Any]:
     return json.loads((ROOT / "schemas" / "openapi.json").read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
-# Exactly the M1 slice of the CONTRACTS.md section 3 table. Everything else (cancel, events,
-# evaluations, replays, reruns, experiments, exports, artifacts) belongs to later milestones and
-# must not appear as a half-built route.
+# Exactly the M1+M2 slice of the CONTRACTS.md section 3 table. Everything else (replays, reruns,
+# experiments, exports, artifacts) belongs to later milestones and must not appear as a
+# half-built route.
 M1_ROUTES = {
     ("get", "/health/live"),
     ("get", "/health/ready"),
@@ -25,6 +25,9 @@ M1_ROUTES = {
     ("get", "/api/v1/runs"),
     ("post", "/api/v1/runs"),
     ("get", "/api/v1/runs/{run_id}"),
+    ("post", "/api/v1/runs/{run_id}/cancel"),
+    ("get", "/api/v1/runs/{run_id}/events"),
+    ("get", "/api/v1/runs/{run_id}/evaluations"),
 }
 
 
@@ -32,7 +35,7 @@ def operations(spec: dict[str, Any]) -> dict[tuple[str, str], dict[str, Any]]:
     return {(m, p): op for p, item in spec["paths"].items() for m, op in item.items()}
 
 
-def test_documented_routes_are_exactly_the_m1_scope(spec: dict[str, Any]) -> None:
+def test_documented_routes_are_exactly_the_implemented_scope(spec: dict[str, Any]) -> None:
     assert set(operations(spec)) == M1_ROUTES
 
 

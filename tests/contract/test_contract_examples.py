@@ -6,12 +6,12 @@ import re
 from pathlib import Path
 from typing import Any
 
-import pytest
-
-from agentcrash.domain.ports import ErrorEnvelope, RunRecord
+from agentcrash.domain.events import EVENT_TYPES
+from agentcrash.domain.ports import ErrorEnvelope, EventRecord, RunRecord
 from agentcrash.domain.registry import Registry
 from agentcrash.scenarios.loader import load_scenario_document
 from agentcrash.scenarios.manifest import validate_run_create
+from agentcrash.storage import schema
 
 ROOT = Path(__file__).resolve().parents[2]
 CONTRACTS = (ROOT / "CONTRACTS.md").read_text(encoding="utf-8")
@@ -79,8 +79,16 @@ def test_run_response_example_is_a_subset_of_the_run_record() -> None:
         assert dumped[key] == value, key
 
 
-@pytest.mark.parametrize("marker", ['"schema_version":"1.0"'])
-def test_event_example_is_not_yet_modelled(marker: str) -> None:
-    """Events arrive in M2; this guards against silently claiming they are covered."""
-    assert any(marker in text.replace(" ", "").replace("\n", "") for _, text in BLOCKS)
-    assert not (ROOT / "src/agentcrash/domain/events.py").exists()
+def test_event_example_validates_against_the_event_record() -> None:
+    example = json.loads(block("json", '"prev_hash"'))
+    record = EventRecord.model_validate_json(json.dumps(example))
+    assert record.schema_version == "1.0"
+    dumped = json.loads(record.model_dump_json())
+    for key, value in example.items():
+        assert dumped[key] == value, key
+
+
+def test_every_documented_event_type_is_known_to_the_code_and_the_schema() -> None:
+    line = next(ln for ln in CONTRACTS.splitlines() if ln.startswith("Event types:"))
+    documented = set(re.findall(r"`([a-z_.]+)`", line.split("Lease/worker")[0]))
+    assert documented == set(EVENT_TYPES) == set(schema.EVENT_TYPES)

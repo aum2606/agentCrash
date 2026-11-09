@@ -1,29 +1,38 @@
 # Progress ledger
 
-Last updated: 2026-11-09. M0 and M1 are **accepted** (local evidence below plus CI green on `origin/main` @ `ad5e8df`, reported by the user; the run URL was not given to me and I could not view Actions). Current milestone: **M2, in progress** (slice 1 of 6 done).
+Last updated: 2026-11-10. M0 and M1 are **accepted** (local evidence below plus CI green on `origin/main` @ `ad5e8df`, reported by the user; the run URL was not given to me and I could not view Actions). Current milestone: **M2 implemented locally, not accepted** (CI has not run it).
 
-## M2: durable healthy execution (in progress)
+## M2: durable healthy execution (implemented locally; not accepted)
 
-M2 has six tasks in IMPLEMENTATION.md. Only the first is partly done. **Nothing executes an agent yet; accepted runs still stay `queued` unless a test claims them.**
+All six M2 tasks are implemented for the healthy path with the naive agent. CI has not run this code; M2 is accepted only after it does. Faults and the resilient agent are M3: runs needing them end in `error` (`FAULTS_NOT_IMPLEMENTED`, `ADAPTER_NOT_IMPLEMENTED`), never as a fake pass.
 
-**Done in slice 1** (`storage/queue.py`, `domain/ports.py`; decision D-025):
-- `JobQueue.claim_execute`: short transaction, `FOR UPDATE SKIP LOCKED`, new attempt, run fencing token +1, 30 s lease from PostgreSQL `now()`.
-- `JobQueue.heartbeat`: needs matching owner and token and an unexpired lease; an expired lease cannot be revived.
-- `JobQueue.reap_expired`: closes an expired open attempt as `worker_lost`, invalidates the token, and in the same transaction queues a fresh attempt or, at the cap of 2 attempts, sets the run `error`.
-- `lock_fenced_attempt` / `JobQueue.close_attempt`: stale tokens, other attempts' tokens and already-closed attempts raise `StaleFence`.
+**Implemented** (decisions D-025..D-027):
+- Queue (`storage/queue.py`): `FOR UPDATE SKIP LOCKED` claim with a fresh attempt and fencing-token bump, 30 s leases, heartbeat that cannot revive an expired lease, reaper (`worker_lost`, replacement attempt, 2-attempt cap -> run `error` / `INFRA_WORKER_LOST`), immediate `abandon` for the supervisor, separate grading claim with a 3-delivery cap.
+- Evidence (`migrations/0002`, `storage/attempts.py`, `domain/events.py`): per-attempt fixture clone, contiguous hash-chained events (genesis constant, 128 KiB cap), closure event with final-state hash, append-only events and receipts enforced by trigger, tool-call, receipt and ledger tables, CHECK on terminations, `runs.error_code`.
+- Gateway (`execution/gateway.py`, `server.py`): policy before dispatch, one fenced transaction per call, retransmitted call ID returns the stored outcome, same-key receipts, CAS, ledger uniqueness, budgets, redaction (`domain/redaction.py`), loopback HTTP with a per-attempt capability and `CONCURRENT_CALL_UNSUPPORTED`.
+- Runner (`execution/child.py`, `workers/supervisor.py`): agent in a separate process with an allowlisted environment, no storage imports; real deadline; cancellation polling; whole-process-tree kill (a Windows venv launcher otherwise orphans the agent); drain-then-abandon on shutdown.
+- Agent and graders: `invoice-naive` healthy path, seeded agent RNG, seven graders and the verdict rule (`evaluation/graders.py`, `domain/evidence.py`).
+- API: `POST /runs/{id}/cancel`, `GET /runs/{id}/events`, `GET /runs/{id}/evaluations`; `error_code` on runs. CLI: `agentcrash worker` (refuses an unmigrated database). New scenario `invoice-healthy`.
 
-**Evidence** (Windows host, PostgreSQL 18.6): `tests/integration/test_queue.py`, 16 tests, no sleeps: 8-way claim race gives exactly one attempt; 6 workers get 6 distinct jobs; a locked job does not block another worker; finished runs are never claimed; heartbeat owner/token/expiry rules; reaper requeue, idempotency and cap; stale worker fenced before and after reassignment; concurrent reapers requeue once; reaper racing a fenced close yields exactly one outcome. Mutation checks: removing `SKIP LOCKED` fails the lock test; removing the token comparison fails the stale-worker test. Full run: `agentcrash check` passes, 189 non-DB tests, 49 integration tests.
+**Evidence** (Windows, PostgreSQL 18.6; all run locally):
+- `agentcrash check` passes; 241 non-DB tests; 91 integration tests (20 queue/execution + 21 gateway + 1 real-worker-process test among them).
+- Healthy run reaches `completed/pass` with contiguous, attributable, chain-valid events; two runs with one manifest give an identical observable digest and final-state hash; a new API app instance serves the finished run and its events.
+- Real `agentcrash worker` process killed (whole tree) after the write committed: the attempt is `worker_lost` with the mutation recorded, the replacement starts from the fixture and passes, only it is graded. Child killed after the write, suspended worker waking after reassignment (fenced, publishes nothing), two lost attempts (`INFRA_WORKER_LOST`), drain abandon: all tested.
+- Duplicate delivery: finished runs are never reclaimed; a re-delivered grading job publishes one evaluation. Retransmitted call ID, same key/same payload, changed payload (409), different key (`ALREADY_POSTED`), CAS conflict then same-key retry: tested.
+- Cancel before the write commits nothing; cancel after keeps the committed state, audited, verdict `inconclusive`. Hung call hits the deadline, child gone, verdict `fail`.
+- Mutation checks (each broke a test, then restored): gateway ignoring cancel, skipping the fence, disabling receipt replay, disabling redaction, not requiring the integrity grader; earlier: removing `SKIP LOCKED` / the token comparison.
 
-**Found while testing:** my first reaper overwrote an attempt a worker had just closed (it did not re-check after taking the run lock); fixed and covered by the race test. A test leaked an open connection whose transaction blocked a later `TRUNCATE`, so the run hung until I stopped it; fixed. My first `SKIP LOCKED` test deadlocked itself when it failed; restructured.
+**Mistakes caught:** reaper overwrote an attempt a worker had just closed; tests leaked a connection that blocked `TRUNCATE`; a self-deadlocking lock test; the Windows orphaned-child issue above; the worker-kill test first deadlocked on its own lock order (a killed client's backend stays blocked on the advisory lock until released); a hardcoded `0001` revision in an old test; a stray `git stash` (immediately restored, nothing lost).
 
-**Not done in M2:** worker process/supervisor and child runner, fixture cloning, invoice tools/CAS/receipts, gateway event writer, naive agent and graders, cancellation and deadlines, the M2 acceptance run (healthy run, kill worker after a write, duplicate delivery, cancel before/after write). Known gaps in slice 1:
-- An expired lease whose attempt was already closed is skipped by the reaper; the completion slice must mark such jobs `done`.
-- `cancel_requested` is not consulted yet.
-- `run_attempts.termination` has no database CHECK constraint; the values are enforced in code only.
-- No run `error_code` is stored (D-025).
-- Linux CI has not run these new tests.
+**Not done / limits:**
+- No Linux or GitHub Actions run of this code.
+- Faults, fault events, resilient agent, vulnerable document parser, stale snapshots and conflict patches (M3). Logical time advances only through `clock.advanced` (base tool latency is 0 ms, D-027).
+- On Windows `terminate` is already forceful, so the 2 s graceful window is only real on POSIX.
+- An expired lease whose attempt a worker already closed is skipped by the reaper (job stays leased); cancel of a running run relies on the supervisor's 1 s poll or the next gateway call.
+- Wall/monotonic clock are used for deadlines and event timestamps; no clock-injection tests beyond the real-deadline test.
+- Idempotency-key retention job, DB-outage, disk-full and load tests (M7).
 
-**Smallest next task:** the job completion path: one transaction under `lock_fenced_attempt` that closes the attempt, marks the job `done` and moves the run to `evaluating`, then a minimal worker loop (claim, heartbeat thread, no agent yet) with a test that kills the worker process mid-lease and checks the reaper recovers it.
+**Smallest next task (M3):** the pure fault matcher (`faults/`: stable SHA-256 sampling, stage ordering, ambiguity checks) with property tests, then wire `fault.decided` into the gateway.
 
 ---
 

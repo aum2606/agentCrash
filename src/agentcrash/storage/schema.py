@@ -28,8 +28,29 @@ metadata = MetaData()
 
 RUN_STATUSES = ("queued", "running", "evaluating", "completed", "error")
 VERDICTS = ("pass", "fail", "inconclusive")
+EVENT_TYPES = (
+    "attempt.started",
+    "agent.step",
+    "tool.requested",
+    "policy.decided",
+    "fault.decided",
+    "environment.mutated",
+    "tool.completed",
+    "tool.transport_failed",
+    "clock.advanced",
+    "agent.finished",
+    "attempt.closed",
+)
 JOB_KINDS = ("execute", "grade", "replay", "export")
 JOB_STATUSES = ("queued", "leased", "done", "error")
+TERMINATIONS = (
+    "agent_completed",
+    "agent_error",
+    "budget_exceeded",
+    "deadline_exceeded",
+    "cancelled",
+    "worker_lost",
+)
 
 
 def _in(column: str, values: tuple[str, ...]) -> str:
@@ -93,6 +114,7 @@ runs = Table(
     Column("verdict", Text),
     Column("cancel_requested", Boolean, nullable=False, server_default=text("false")),
     Column("fencing_token", BigInteger, nullable=False, server_default=text("0")),
+    Column("error_code", Text),
     Column(
         "selected_attempt_id",
         UUID(as_uuid=True),
@@ -132,6 +154,10 @@ run_attempts = Table(
     _created(),
     Column("closed_at", TIMESTAMP(timezone=True)),
     UniqueConstraint("run_id", "ordinal"),
+    CheckConstraint(
+        f"termination IS NULL OR {_in('termination', TERMINATIONS)}",
+        name="run_attempts_termination_check",
+    ),
 )
 
 jobs = Table(
@@ -179,4 +205,86 @@ api_idempotency = Table(
     _created(),
     Column("tombstoned_at", TIMESTAMP(timezone=True)),
     PrimaryKeyConstraint("principal", "route", "key"),
+)
+
+events = Table(
+    "events",
+    metadata,
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("seq", BigInteger, nullable=False),
+    Column("run_id", UUID(as_uuid=True), ForeignKey("runs.id"), nullable=False),
+    Column("type", Text, nullable=False),
+    Column("logical_time_ms", BigInteger, nullable=False),
+    Column("wall_time", TIMESTAMP(timezone=True), nullable=False),
+    Column("actor_id", Text),
+    Column("call_id", Text),
+    Column("payload", JSONB, nullable=False),
+    Column("prev_hash", Text, nullable=False),
+    Column("event_hash", Text, nullable=False),
+    PrimaryKeyConstraint("attempt_id", "seq"),
+    CheckConstraint(_in("type", EVENT_TYPES), name="events_type_check"),
+)
+Index("events_run_idx", events.c.run_id)
+
+tool_calls = Table(
+    "tool_calls",
+    metadata,
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("call_id", Text, nullable=False),
+    Column("call_index", Integer, nullable=False),
+    Column("tool_ordinal", Integer, nullable=False),
+    Column("actor_id", Text, nullable=False),
+    Column("tool", Text, nullable=False),
+    Column("input_hash", Text, nullable=False),
+    Column("outcome", JSONB, nullable=False),
+    Column("terminal", Boolean, nullable=False, server_default=text("true")),
+    PrimaryKeyConstraint("attempt_id", "call_id"),
+    UniqueConstraint("attempt_id", "call_index"),
+)
+
+environment_rows = Table(
+    "environment_rows",
+    metadata,
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("entity_type", Text, nullable=False),
+    Column("entity_id", Text, nullable=False),
+    Column("version", Integer, nullable=False),
+    Column("data", JSONB, nullable=False),
+    PrimaryKeyConstraint("attempt_id", "entity_type", "entity_id"),
+)
+
+command_receipts = Table(
+    "command_receipts",
+    metadata,
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("idempotency_key", Text, nullable=False),
+    Column("command_hash", Text, nullable=False),
+    Column("semantic_receipt_id", Text, nullable=False),
+    Column("result", JSONB, nullable=False),
+    PrimaryKeyConstraint("attempt_id", "idempotency_key"),
+)
+
+ledger_entries = Table(
+    "ledger_entries",
+    metadata,
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("semantic_entry_id", Text, nullable=False),
+    Column("invoice_id", Text, nullable=False),
+    Column("data", JSONB, nullable=False),
+    PrimaryKeyConstraint("attempt_id", "semantic_entry_id"),
+    UniqueConstraint("attempt_id", "invoice_id"),
+)
+
+evaluations = Table(
+    "evaluations",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("grader_set_hash", Text, nullable=False),
+    Column("snapshot_hash", Text),
+    Column("verdict", Text, nullable=False),
+    Column("grades", JSONB, nullable=False),
+    Column("evaluated_at", TIMESTAMP(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("attempt_id", "grader_set_hash"),
+    CheckConstraint(_in("verdict", VERDICTS), name="evaluations_verdict_check"),
 )

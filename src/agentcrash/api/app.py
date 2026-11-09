@@ -43,6 +43,9 @@ from agentcrash.domain.models import (
 )
 from agentcrash.domain.pagination import parse_limit
 from agentcrash.domain.ports import (
+    AttemptNotInRun,
+    EvaluationList,
+    EventPage,
     RunPage,
     RunRecord,
     ScenarioPage,
@@ -381,6 +384,88 @@ def create_app(services: Services) -> FastAPI:
         if found is None:
             raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
         return found
+
+    def _run_id(raw: str) -> UUID:
+        try:
+            return UUID(raw)
+        except ValueError:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.") from None
+
+    def _uuid_param(raw: str | None, name: str) -> UUID | None:
+        if raw is None:
+            return None
+        try:
+            return UUID(raw)
+        except ValueError:
+            raise RunValidationError([Diagnostic(f"/{name}", "INVALID_UUID")]) from None
+
+    @v1.post(
+        "/runs/{run_id}/cancel",
+        response_model=RunRecord,
+        status_code=202,
+        responses={200: {"model": RunRecord}, **error_responses(404, 413, 422)},
+    )
+    async def cancel_run(run_id: str, request: Request, response: Response) -> RunRecord:
+        body = await read_body(request)
+        reason: str | None = None
+        if body.strip():
+            doc = load_json_document(body, RunValidationError)
+            extra = sorted(set(doc) - {"reason"})
+            if (
+                extra
+                or not isinstance(doc.get("reason", ""), str)
+                or len(doc.get("reason", "")) > 500
+            ):
+                raise RunValidationError(
+                    [Diagnostic("/reason" if not extra else "/", "INVALID_CANCEL")]
+                )
+            reason = doc.get("reason")
+        result = services.store.cancel_run(_run_id(run_id), reason)
+        if result is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        if not result.accepted:
+            response.status_code = 200  # already terminal: idempotent no-op
+        return result.run
+
+    @v1.get(
+        "/runs/{run_id}/events",
+        response_model=EventPage,
+        responses=error_responses(400, 404, 422),
+        openapi_extra={"parameters": _query_docs("attempt_id", "after_seq", "limit")},
+    )
+    def list_events(run_id: str, request: Request) -> EventPage:
+        _list_params(request, {"attempt_id", "after_seq", "limit"})
+        q = request.query_params
+        try:
+            after = int(q.get("after_seq", "0"))
+        except ValueError:
+            after = -1
+        if after < 0:
+            raise ApiError(400, "INVALID_PARAMETER", "after_seq must be a non-negative integer.")
+        attempt = _uuid_param(q.get("attempt_id"), "attempt_id")
+        try:
+            page = services.store.list_events(
+                _run_id(run_id), attempt, after, _limit(q.get("limit"))
+            )
+        except AttemptNotInRun:
+            raise RunValidationError([Diagnostic("/attempt_id", "ATTEMPT_NOT_IN_RUN")]) from None
+        if page is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        return page
+
+    @v1.get(
+        "/runs/{run_id}/evaluations",
+        response_model=EvaluationList,
+        responses=error_responses(404, 422),
+        openapi_extra={"parameters": _query_docs("attempt_id")},
+    )
+    def list_evaluations(run_id: str, request: Request) -> EvaluationList:
+        _list_params(request, {"attempt_id"})
+        attempt = _uuid_param(request.query_params.get("attempt_id"), "attempt_id")
+        items = services.store.list_evaluations(_run_id(run_id), attempt)
+        if items is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        return EvaluationList(items=items)
 
     app.include_router(v1)
 

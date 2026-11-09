@@ -11,7 +11,7 @@ import typer
 import uvicorn
 
 from agentcrash import __version__
-from agentcrash.bootstrap import default_registry, dev_init, read_token
+from agentcrash.bootstrap import alembic_head, build_worker, default_registry, dev_init, read_token
 from agentcrash.domain.diagnostics import ValidationFailed
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_scenario_document
@@ -126,6 +126,32 @@ def scenarios_validate(
                 typer.echo(f"        {d['path'] or '/'}: {d['code']}", err=True)
     if not all(r["valid"] for r in results):
         raise typer.Exit(1)
+
+
+@app.command()
+def worker() -> None:
+    """Run the execution/grading worker until interrupted (Ctrl+C drains, then recovers)."""
+    import logging
+    import signal
+    import threading
+
+    logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+    stop = threading.Event()
+    signal.signal(signal.SIGINT, lambda *_: stop.set())
+    if hasattr(signal, "SIGTERM"):
+        signal.signal(signal.SIGTERM, lambda *_: stop.set())
+    settings = load_settings()
+    w = build_worker(settings)
+    revision = w.repo.schema_revision()
+    if revision != alembic_head(settings.root):
+        typer.echo(
+            f"error: database revision is {revision!r}; run `uv run alembic upgrade head` first",
+            err=True,
+        )
+        raise typer.Exit(2)
+    typer.echo(f"worker {w.owner} started")
+    w.run_forever(stop)
+    typer.echo("worker stopped")
 
 
 @app.command()

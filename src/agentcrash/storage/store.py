@@ -8,16 +8,22 @@ from datetime import datetime
 from typing import Any
 from uuid import UUID, uuid4
 
-from sqlalchemy import Connection, Engine, func, select, text, tuple_
+from sqlalchemy import Connection, Engine, func, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import ProgrammingError
 
+from agentcrash.domain.evidence import Grade
 from agentcrash.domain.models import CompiledScenario, Manifest, RunCreate, Scenario, ScenarioRef
 from agentcrash.domain.pagination import InvalidCursor, decode_cursor, encode_cursor
 from agentcrash.domain.ports import (
     AgentIdentity,
+    AttemptNotInRun,
     AttemptSummary,
+    CancelResult,
     CreateRunResult,
+    EvaluationRecord,
+    EventPage,
+    EventRecord,
     IdempotencyConflict,
     IdempotencyExpired,
     PutScenarioResult,
@@ -259,6 +265,117 @@ class PostgresStore:
             next_cursor = encode_cursor(tail.created_at, [str(tail.id)])
         return RunPage(items=items, next_cursor=next_cursor)
 
+    # --- cancellation, events, evaluations --------------------------------------------------
+
+    def cancel_run(self, run_id: UUID, reason: str | None) -> CancelResult | None:
+        """Idempotent. A run with no open attempt (queued, or waiting for a replacement
+        attempt) finishes at once with no evaluation; otherwise the durable flag is set and the
+        supervisor closes the attempt. Lock order job -> run, like claim and reaper."""
+        r, j, a = t.runs, t.jobs, t.run_attempts
+        with self._engine.begin() as conn:
+            job = conn.execute(
+                select(j.c.id, j.c.status)
+                .where(
+                    j.c.run_id == run_id,
+                    j.c.kind == "execute",
+                    j.c.status.in_(("queued", "leased")),
+                )
+                .with_for_update()
+            ).first()
+            run = conn.execute(select(r.c.status).where(r.c.id == run_id).with_for_update()).first()
+            if run is None:
+                return None
+            if run.status in ("completed", "error"):
+                return CancelResult(run=self._load_runs(conn, [run_id])[0], accepted=False)
+            conn.execute(update(r).where(r.c.id == run_id).values(cancel_requested=True))
+            open_attempts = conn.execute(
+                select(func.count()).where(a.c.run_id == run_id, a.c.closed_at.is_(None))
+            ).scalar_one()
+            if job is not None and job.status == "queued" and open_attempts == 0:
+                conn.execute(update(j).where(j.c.id == job.id).values(status="done"))
+                conn.execute(
+                    update(r)
+                    .where(r.c.id == run_id)
+                    .values(status="completed", closed_at=func.now())
+                )
+            return CancelResult(run=self._load_runs(conn, [run_id])[0], accepted=True)
+
+    def list_events(
+        self, run_id: UUID, attempt_id: UUID | None, after_seq: int, limit: int
+    ) -> EventPage | None:
+        a, ev = t.run_attempts, t.events
+        with self._engine.connect() as conn:
+            if conn.execute(select(t.runs.c.id).where(t.runs.c.id == run_id)).first() is None:
+                return None
+            if attempt_id is None:
+                attempt_id = conn.execute(
+                    select(a.c.id).where(a.c.run_id == run_id).order_by(a.c.ordinal.desc()).limit(1)
+                ).scalar()
+                if attempt_id is None:
+                    return EventPage(
+                        items=[], next_after_seq=after_seq, has_more=False, attempt_closed=False
+                    )
+            else:
+                owner = conn.execute(select(a.c.run_id).where(a.c.id == attempt_id)).scalar()
+                if owner != run_id:
+                    raise AttemptNotInRun
+            rows = conn.execute(
+                select(ev)
+                .where(ev.c.attempt_id == attempt_id, ev.c.seq > after_seq)
+                .order_by(ev.c.seq)
+                .limit(limit + 1)
+            ).all()
+            closed = conn.execute(
+                select(a.c.closed_at.is_not(None)).where(a.c.id == attempt_id)
+            ).scalar_one()
+        page = rows[:limit]
+        items = [
+            EventRecord(
+                run_id=run_id,
+                attempt_id=attempt_id,
+                seq=e.seq,
+                type=e.type,
+                wall_time=e.wall_time,
+                logical_time_ms=e.logical_time_ms,
+                actor_id=e.actor_id,
+                call_id=e.call_id,
+                payload=e.payload,
+                prev_hash=e.prev_hash,
+                event_hash=e.event_hash,
+            )
+            for e in page
+        ]
+        return EventPage(
+            items=items,
+            next_after_seq=items[-1].seq if items else after_seq,
+            has_more=len(rows) > limit,
+            attempt_closed=bool(closed),
+        )
+
+    def list_evaluations(
+        self, run_id: UUID, attempt_id: UUID | None
+    ) -> list[EvaluationRecord] | None:
+        a, e = t.run_attempts, t.evaluations
+        with self._engine.connect() as conn:
+            if conn.execute(select(t.runs.c.id).where(t.runs.c.id == run_id)).first() is None:
+                return None
+            query = select(e).join(a, a.c.id == e.c.attempt_id).where(a.c.run_id == run_id)
+            if attempt_id is not None:
+                query = query.where(e.c.attempt_id == attempt_id)
+            rows = conn.execute(query.order_by(a.c.ordinal, e.c.evaluated_at)).all()
+        return [
+            EvaluationRecord(
+                id=row.id,
+                attempt_id=row.attempt_id,
+                grader_set_hash=row.grader_set_hash,
+                snapshot_hash=row.snapshot_hash,
+                verdict=row.verdict,
+                grades=[Grade.model_validate(g) for g in row.grades],
+                evaluated_at=row.evaluated_at,
+            )
+            for row in rows
+        ]
+
     @staticmethod
     def _load_runs(conn: Connection, ids: list[UUID]) -> list[RunRecord]:
         """Runs in the order of ``ids`` (missing ids are skipped), with their attempts."""
@@ -296,6 +413,7 @@ class PostgresStore:
                     labels=row.labels,
                     created_at=created_at,
                     completed_at=row.closed_at,
+                    error_code=row.error_code,
                 )
             )
         return out

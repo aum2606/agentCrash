@@ -42,7 +42,7 @@ def stub_services(registry: Registry, stub_store: StubStore, clock: FakeClock) -
         store=stub_store,
         registry=registry,
         token=TOKEN,
-        expected_revision="0001",
+        expected_revision="0002",
         provenance=lambda: (
             SourceInfo(commit=None, dirty=True),
             ToolchainInfo(python="3.12", lock_hash=None),

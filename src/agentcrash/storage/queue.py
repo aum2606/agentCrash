@@ -5,16 +5,18 @@ transaction open while a run executes. PostgreSQL ``now()`` is the only clock fo
 Lock order is always job row, then run row, so claim, reaper and fenced writes cannot deadlock.
 """
 
+from typing import Any
 from uuid import UUID, uuid4
 
 from sqlalchemy import Connection, Engine, func, select, update
 
-from agentcrash.domain.ports import WORKER_TERMINATIONS, Claim, Reaped, StaleFence
+from agentcrash.domain.ports import WORKER_TERMINATIONS, Claim, GradeClaim, Reaped, StaleFence
 from agentcrash.storage import schema as t
 
 LEASE_SECONDS = 30
 MAX_EXECUTION_ATTEMPTS = 2
 _REAP_BATCH = 100
+MAX_GRADE_DELIVERIES = 3
 
 
 def lock_fenced_attempt(conn: Connection, attempt_id: UUID, fencing_token: int) -> UUID:
@@ -77,6 +79,7 @@ class JobQueue:
                     j.c.status == "queued",
                     j.c.available_at <= func.now(),
                     r.c.status.in_(("queued", "running")),
+                    r.c.cancel_requested.is_(False),
                 )
                 .order_by(j.c.available_at, j.c.created_at, j.c.id)
                 .limit(1)
@@ -163,15 +166,82 @@ class JobQueue:
                 .values(termination=termination, closed_at=func.now())
             )
 
-    def reap_expired(self) -> list[Reaped]:
-        """Close attempts whose lease expired as ``worker_lost`` and fence their token out.
-
-        Within the same transaction, queue a fresh attempt while the run is under the attempt
-        cap; otherwise the run becomes ``error``. The old attempt is never continued.
-        """
+    def _lose(self, conn: Connection, job: Any) -> Reaped | None:
+        """Close ``job``'s open attempt as ``worker_lost`` and fence its token out; then queue a
+        fresh attempt, finish a cancelled run, or (at the attempt cap) fail the run. Runs inside
+        the caller's transaction, which already holds the job row lock."""
         j, r, a = t.jobs, t.runs, t.run_attempts
+        # Run lock first, then re-check the attempt: a worker that closed it just before us
+        # must not be overwritten with worker_lost.
+        cancelled = conn.execute(
+            select(r.c.cancel_requested).where(r.c.id == job.run_id).with_for_update()
+        ).scalar_one()
+        ordinal = conn.execute(
+            update(a)
+            .where(a.c.id == job.attempt_id, a.c.closed_at.is_(None))
+            .values(termination="worker_lost", closed_at=func.now())
+            .returning(a.c.ordinal)
+        ).scalar()
+        if ordinal is None:
+            return None
+        conn.execute(  # invalidates the lost worker's token
+            update(r).where(r.c.id == job.run_id).values(fencing_token=r.c.fencing_token + 1)
+        )
+        conn.execute(update(j).where(j.c.id == job.id).values(status="error"))
+        requeue = not cancelled and ordinal < self._max_attempts
+        if requeue:
+            conn.execute(
+                j.insert().values(
+                    id=uuid4(),
+                    kind="execute",
+                    run_id=job.run_id,
+                    dedupe_key=f"execute:{job.run_id}:{ordinal + 1}",
+                )
+            )
+        elif cancelled:  # cancellation wins over recovery: no replacement attempt
+            conn.execute(
+                update(r)
+                .where(r.c.id == job.run_id)
+                .values(status="completed", closed_at=func.now())
+            )
+        else:
+            conn.execute(
+                update(r)
+                .where(r.c.id == job.run_id)
+                .values(status="error", error_code="INFRA_WORKER_LOST", closed_at=func.now())
+            )
+        return Reaped(job.run_id, job.attempt_id, ordinal, requeue)
+
+    def abandon(self, job_id: UUID, owner: str, fencing_token: int) -> Reaped | None:
+        """The supervisor's own recovery path (child died, shutdown drain expired): same
+        transition as the reaper, without waiting for the lease. ``None`` if already handled."""
+        j = t.jobs
+        with self._engine.begin() as conn:
+            job = conn.execute(
+                select(j.c.id, j.c.run_id, j.c.attempt_id)
+                .where(
+                    j.c.id == job_id,
+                    j.c.kind == "execute",
+                    j.c.status == "leased",
+                    j.c.owner == owner,
+                    j.c.fencing_token == fencing_token,
+                )
+                .with_for_update()
+            ).first()
+            return None if job is None else self._lose(conn, job)
+
+    def reap_expired(self) -> list[Reaped]:
+        """Recover jobs whose lease expired. An execute attempt is closed ``worker_lost`` and
+        replaced (or the run fails at the cap); an expired grading lease simply re-queues the
+        job, which is safe because publishing an evaluation is idempotent."""
+        j, a = t.jobs, t.run_attempts
         reaped: list[Reaped] = []
         with self._engine.begin() as conn:
+            conn.execute(
+                update(j)
+                .where(j.c.kind == "grade", j.c.status == "leased", j.c.lease_until < func.now())
+                .values(status="queued", owner=None, lease_until=None)
+            )
             expired = conn.execute(
                 select(j.c.id, j.c.run_id, j.c.attempt_id)
                 .join(a, a.c.id == j.c.attempt_id)
@@ -186,38 +256,41 @@ class JobQueue:
                 .with_for_update(skip_locked=True, of=j)
             ).all()
             for job in expired:
-                # Take the run lock first, then re-check the attempt: a worker that closed it
-                # just before us must not be overwritten with worker_lost.
-                conn.execute(select(r.c.id).where(r.c.id == job.run_id).with_for_update())
-                ordinal = conn.execute(
-                    update(a)
-                    .where(a.c.id == job.attempt_id, a.c.closed_at.is_(None))
-                    .values(termination="worker_lost", closed_at=func.now())
-                    .returning(a.c.ordinal)
-                ).scalar()
-                if ordinal is None:
-                    continue
-                conn.execute(  # invalidates the lost worker's token
-                    update(r)
-                    .where(r.c.id == job.run_id)
-                    .values(fencing_token=r.c.fencing_token + 1)
-                )
-                conn.execute(update(j).where(j.c.id == job.id).values(status="error"))
-                requeue = ordinal < self._max_attempts
-                if requeue:
-                    conn.execute(
-                        j.insert().values(
-                            id=uuid4(),
-                            kind="execute",
-                            run_id=job.run_id,
-                            dedupe_key=f"execute:{job.run_id}:{ordinal + 1}",
-                        )
-                    )
-                else:
-                    conn.execute(
-                        update(r)
-                        .where(r.c.id == job.run_id)
-                        .values(status="error", closed_at=func.now())
-                    )
-                reaped.append(Reaped(job.run_id, job.attempt_id, ordinal, requeue))
+                lost = self._lose(conn, job)
+                if lost is not None:
+                    reaped.append(lost)
         return reaped
+
+    def claim_grade(self, owner: str) -> GradeClaim | None:
+        """Lease the oldest grading job. No attempt or fencing bump: grading reads an immutable,
+        closed attempt and publishes idempotently."""
+        j = t.jobs
+        with self._engine.begin() as conn:
+            job = conn.execute(
+                select(j.c.id, j.c.run_id, j.c.attempt_id, j.c.delivery_count)
+                .where(j.c.kind == "grade", j.c.status == "queued", j.c.available_at <= func.now())
+                .order_by(j.c.available_at, j.c.created_at, j.c.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).first()
+            if job is None:
+                return None
+            if job.delivery_count >= MAX_GRADE_DELIVERIES:  # poison job: fail the run visibly
+                conn.execute(update(j).where(j.c.id == job.id).values(status="error"))
+                conn.execute(
+                    update(t.runs)
+                    .where(t.runs.c.id == job.run_id, t.runs.c.status == "evaluating")
+                    .values(status="error", error_code="EVALUATOR_ERROR", closed_at=func.now())
+                )
+                return None
+            conn.execute(
+                update(j)
+                .where(j.c.id == job.id)
+                .values(
+                    status="leased",
+                    owner=owner,
+                    delivery_count=j.c.delivery_count + 1,
+                    lease_until=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, self._lease),
+                )
+            )
+        return GradeClaim(job.id, job.run_id, job.attempt_id)

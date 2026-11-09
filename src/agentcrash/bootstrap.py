@@ -24,11 +24,16 @@ from agentcrash.domain.canonical import canonical_hash, sha256_hex
 from agentcrash.domain.models import GraderId, SourceInfo, ToolchainInfo
 from agentcrash.domain.registry import EnvironmentSpec, GraderSpec, Registry
 from agentcrash.environments.invoice import catalog
+from agentcrash.environments.invoice.fixture import load_bundle
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_scenario_document
 from agentcrash.settings import Settings, load_settings
+from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.engine import make_engine
+from agentcrash.storage.queue import JobQueue
 from agentcrash.storage.store import PostgresStore
+from agentcrash.workers.loop import Worker
+from agentcrash.workers.supervisor import AttemptSupervisor
 
 _MAX_FILE = 1 << 20
 
@@ -56,7 +61,7 @@ def _read_json(path: Path) -> object:
 def default_registry(root: Path) -> Registry:
     """``root`` is the repository root holding ``fixtures/`` and ``graders/``."""
     fixtures = {
-        fixture_id: canonical_hash(_read_json(root / rel))
+        fixture_id: load_bundle(root / rel).hash
         for fixture_id, rel in catalog.FIXTURE_FILES.items()
     }
     env = EnvironmentSpec(
@@ -137,6 +142,16 @@ def build_services(settings: Settings) -> Services:
         queue_cap=settings.queue_cap,
         create_rate_per_minute=settings.create_rate_per_minute,
     )
+
+
+def build_worker(settings: Settings) -> Worker:
+    """Wire the worker: queue, per-attempt storage, supervisor (child runner) and grading."""
+    engine = make_engine(settings.database_url)
+    owner = f"worker-{os.getpid()}-{secrets.token_hex(4)}"
+    queue = JobQueue(engine)
+    repo = AttemptRepo(engine)
+    supervisor = AttemptSupervisor(queue, repo, settings.root, owner, dict(catalog.TOOLS))
+    return Worker(queue, repo, supervisor, owner)
 
 
 def build_app() -> FastAPI:

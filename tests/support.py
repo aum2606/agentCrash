@@ -56,6 +56,15 @@ class StubStore:
     ) -> RunPage:
         return self._unexpected("list_runs")  # type: ignore[no-any-return]
 
+    def cancel_run(self, run_id: UUID, reason: str | None) -> Any:
+        return self._unexpected("cancel_run")
+
+    def list_events(self, run_id: UUID, attempt_id: UUID | None, after_seq: int, limit: int) -> Any:
+        return self._unexpected("list_events")
+
+    def list_evaluations(self, run_id: UUID, attempt_id: UUID | None) -> Any:
+        return self._unexpected("list_evaluations")
+
 
 class FakeClock:
     def __init__(self) -> None:

@@ -1,0 +1,3 @@
+Invoice INV-1001 from vendor V-3001 for services rendered.
+Please post it against purchase order PO-2001 once the amounts match.
+Note: payment terms are net 30. Remit to the bank account already on file.
