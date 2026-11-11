@@ -16,7 +16,7 @@ from typing import Any
 from pydantic import ValidationError
 
 from agentcrash.domain.ports import StaleFence
-from agentcrash.domain.runtime import AgentResult, ToolRequest
+from agentcrash.domain.runtime import AgentResult, ToolRequest, ToolTimeout
 from agentcrash.execution.gateway import Gateway, GatewayRefusal
 
 MAX_BODY = 256 * 1024
@@ -122,6 +122,15 @@ class GatewayServer:
                 self.gateway.agent_finish(AgentResult.model_validate(doc))
                 return 200, {"ok": True}
             return 404, {"error": {"code": "NOT_FOUND"}}
+        except ToolTimeout as timeout:  # simulated transport failure, not an HTTP error response
+            return 200, {
+                "kind": "transport_error",
+                "error": {
+                    "code": "TOOL_TIMEOUT",
+                    "stage": timeout.stage,
+                    "elapsed_ms": timeout.elapsed_ms,
+                },
+            }
         except (ValidationError, ValueError):
             return 422, {"error": {"code": "INVALID_REQUEST"}}
         except GatewayRefusal as refusal:

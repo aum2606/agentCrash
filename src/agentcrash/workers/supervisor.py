@@ -31,7 +31,7 @@ from agentcrash.domain.ports import Claim, StaleFence
 from agentcrash.domain.registry import ToolSpec
 from agentcrash.domain.runtime import AgentTask
 from agentcrash.environments.invoice.fixture import load_bundle
-from agentcrash.execution.gateway import AttemptPolicy, Gateway, Hooks
+from agentcrash.execution.gateway import IMPLEMENTED_EFFECTS, AttemptPolicy, Gateway, Hooks
 from agentcrash.execution.server import GatewayServer
 from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.queue import JobQueue
@@ -96,6 +96,9 @@ class AttemptSupervisor:
                 forbidden=frozenset(manifest.scenario.policy.forbidden_tools),
                 tools=self.tools,
                 budgets=manifest.budgets,
+                faults=tuple(manifest.scenario.faults),
+                seed=manifest.seed,
+                scenario_hash=manifest.scenario_hash,
             ),
             self.wall_clock,
             self.hooks,
@@ -136,7 +139,7 @@ class AttemptSupervisor:
         as if it were healthy (faults arrive in M3; the resilient agent too)."""
         if (manifest.agent.id, manifest.agent.version) not in ADAPTERS:
             return ("ADAPTER_NOT_IMPLEMENTED",)
-        if manifest.scenario.faults:
+        if any(r.effect.type not in IMPLEMENTED_EFFECTS for r in manifest.scenario.faults):
             return ("FAULTS_NOT_IMPLEMENTED",)
         state = self.root / "fixtures" / "invoice" / "v1" / "standard.json"
         if load_bundle(state).hash != manifest.fixture.hash:

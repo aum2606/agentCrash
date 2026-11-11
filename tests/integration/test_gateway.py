@@ -9,6 +9,7 @@ import pytest
 from sqlalchemy import text
 
 from agentcrash.domain.events import PendingEvent
+from agentcrash.domain.models import FaultRule
 from agentcrash.domain.runtime import ToolRequest
 from agentcrash.environments.invoice import catalog
 from agentcrash.environments.invoice.fixture import load_bundle
@@ -34,7 +35,13 @@ def world(clean_engine: Any, store: Any) -> World:
     return World(clean_engine, store)
 
 
-def open_gateway(world: World, hooks: Hooks | None = None, **budget: int) -> tuple[Gateway, Any]:
+def open_gateway(
+    world: World,
+    hooks: Hooks | None = None,
+    faults: tuple[FaultRule, ...] = (),
+    allowed: frozenset[str] | None = None,
+    **budget: int,
+) -> tuple[Gateway, Any]:
     run_id = submit_run(world.store, budgets=budget or None)
     claim = world.queue.claim_execute("w1")
     assert claim is not None and claim.run_id == run_id
@@ -50,10 +57,13 @@ def open_gateway(world: World, hooks: Hooks | None = None, **budget: int) -> tup
         world.repo.gate(claim.attempt_id, claim.fencing_token),
         AttemptPolicy(
             "agent",
-            frozenset(manifest.scenario.policy.allowed_tools),
+            allowed or frozenset(manifest.scenario.policy.allowed_tools),
             frozenset(manifest.scenario.policy.forbidden_tools),
             dict(catalog.TOOLS),
             manifest.budgets,
+            faults=faults,
+            seed=manifest.seed,
+            scenario_hash=manifest.scenario_hash,
         ),
         lambda: datetime.now(UTC),
         hooks or Hooks(),

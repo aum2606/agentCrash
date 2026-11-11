@@ -189,7 +189,16 @@ class PgAttemptTx:
                 ev.c.attempt_id == self._a
             )
         ).scalar_one()
-        return AttemptCounters(sum(ordinals.values()), int(steps), int(logical), ordinals)
+        applications: dict[str, int] = {}
+        for (payload,) in self._c.execute(
+            select(ev.c.payload).where(ev.c.attempt_id == self._a, ev.c.type == "fault.decided")
+        ):
+            if payload.get("applied") is True:
+                rule_id = str(payload["rule_id"])
+                applications[rule_id] = applications.get(rule_id, 0) + 1
+        return AttemptCounters(
+            sum(ordinals.values()), int(steps), int(logical), ordinals, applications
+        )
 
     def get_call(self, call_id: str) -> StoredCall | None:
         tc = t.tool_calls

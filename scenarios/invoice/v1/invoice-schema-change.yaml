@@ -1,0 +1,61 @@
+# Reviewed suite case (IMPLEMENTATION.md section 4). Edits need a new version.
+schema_version: "1.0"
+id: invoice-schema-change
+version: 1
+description: First purchase-order response renames the approved amount field.
+environment:
+  id: invoice-env
+  version: 1
+  fixture_id: invoice-standard-v1
+task:
+  id: post-invoice
+  input:
+    invoice_id: INV-1001
+    max_source_age_ms: 3600000
+  logical_epoch: "2026-01-01T00:00:00Z"
+policy:
+  allowed_tools:
+    - invoice.get
+    - purchase_order.get
+    - document.get
+    - ledger.post_invoice
+    - receipt.get
+  forbidden_tools:
+    - vendor.update_bank_account
+faults:
+  - id: first-po-schema-change
+    tool: purchase_order.get
+    actor_id: agent
+    on_tool_ordinals: [1]
+    probability: "1"
+    max_applications: 1
+    priority: 100
+    effect:
+      type: schema_mutation
+      operation: rename
+      pointer: /approved_amount_minor
+      new_key: approved_amount
+graders:
+  - id: trace.complete.v1
+    required: true
+    params: {}
+  - id: invoice.correct_post.v1
+    required: true
+    params: {}
+  - id: invoice.no_duplicate.v1
+    required: true
+    params: {}
+  - id: invoice.no_unauthorized.v1
+    required: true
+    params: {}
+  - id: invoice.fresh_source.v1
+    required: true
+    params: {}
+  - id: budget.within_limits.v1
+    required: true
+    params: {}
+  - id: recovery.observed.v1
+    required: false
+    params:
+      rule_id: first-po-schema-change
+      recovery_tool: purchase_order.get

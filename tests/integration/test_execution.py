@@ -215,7 +215,7 @@ def test_same_manifest_gives_the_same_observable_digest_and_state(world: World) 
 @pytest.mark.parametrize(
     ("scenario", "agent", "code"),
     [
-        ("invoice-429", "invoice-naive", "FAULTS_NOT_IMPLEMENTED"),
+        ("invoice-schema-change", "invoice-naive", "FAULTS_NOT_IMPLEMENTED"),
         ("invoice-healthy", "invoice-resilient", "ADAPTER_NOT_IMPLEMENTED"),
     ],
 )

@@ -1,10 +1,40 @@
 # Progress ledger
 
-Last updated: 2026-11-10. M0 and M1 are **accepted** (local evidence below plus CI green on `origin/main` @ `ad5e8df`, reported by the user; the run URL was not given to me and I could not view Actions). Current milestone: **M2 implemented locally, not accepted** (CI has not run it).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 1 done locally, not accepted** (uncommitted, unpushed, CI has not run it).
 
-## M2: durable healthy execution (implemented locally; not accepted)
+## M3: fault engine and resilient agent (slice 1 of ~4; not accepted)
 
-All six M2 tasks are implemented for the healthy path with the naive agent. CI has not run this code; M2 is accepted only after it does. Faults and the resilient agent are M3: runs needing them end in `error` (`FAULTS_NOT_IMPLEMENTED`, `ADAPTER_NOT_IMPLEMENTED`), never as a fake pass.
+Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
+
+**Implemented** (M3 tasks 1 and 3 are partial; 2, 4, 5 not started):
+- `faults/matcher.py` (pure): exact SHA-256 sampling with exact-fraction probability, eligibility (tool, actor, ordinal), stage/priority/rule-ID ordering, `applied`/`not_sampled`/`exhausted` decisions, and a runtime refusal (`AmbiguousComposition`) for combinations the compiler should already have rejected. A golden sample value pins the serialization.
+- Gateway (`execution/gateway.py`): after the policy decision it records one `fault.decided` event per eligible rule, then applies `delay`, `http_error`, `timeout_before_commit` and `timeout_after_commit`. Application counts come from the attempt's own events (`storage/attempts.py`), so retransmits never double count.
+- Timeouts are real transport failures: stored as the call outcome, raised as `ToolTimeout` after commit, carried over loopback as `{kind:"transport_error"}`, re-raised by `HttpToolClient`. A retransmitted call ID repeats the timeout without a new ordinal.
+- Supervisor passes faults, seed and scenario hash to the gateway and still refuses scenarios needing `schema_mutation`, `stale_read`, `document_injection` or `scripted_conflict` (`FAULTS_NOT_IMPLEMENTED`).
+- New reviewed scenarios: `invoice-503`, `invoice-timeout-before`, `invoice-timeout-after`, `invoice-latency`, `invoice-schema-change` (refused for now). `expected_demo` metadata was not added: the model holds one verdict, not one per agent, and changing it is a contract change.
+
+**Evidence** (Windows, PostgreSQL 18.6 via Docker Desktop, all run locally this session):
+- `uv run agentcrash check` passed (ruff, mypy --strict, schema/OpenAPI drift).
+- Non-DB suites (unit, property, contract): 258 passed. Integration (real PostgreSQL): 114 passed, including 8 gateway fault tests (`test_faults.py`) and 15 end-to-end naive-agent cases (`test_fault_suite.py`).
+- Naive agent against the demonstration table, through the real worker and child process: `invoice-429` and `invoice-503` fail with no ledger entry; `invoice-timeout-before` fails with none (no `environment.mutated`); `invoice-timeout-after` leaves exactly one mutation and the state oracle **passes** although the agent errored (reported, not forced to fail); `invoice-latency` passes and consumes 2000 logical ms; healthy passes. Same manifest twice gives an identical observable digest and final-state hash for 429, timeout-after and latency.
+- Ineligible rules never consume applications (ordinal-targeted and other-tool rules checked against persisted events); policy denial produces no `fault.decided` event.
+- Mutation checks, each caught then restored: ignore `max_applications`; match the wrong tool; dispatch despite a pre-commit timeout; decide faults for denied calls.
+- Fixes along the way: dev-init tests hard-coded two scenarios (now derived from the scenario directory); a grouped JSON SQL query failed under server-side parameters (counts are now done in Python over a handful of rows).
+
+**Not done / limits:**
+- No fault effect that mutates a payload or needs a fixture: `schema_mutation`, `stale_read`, `document_injection`, `scripted_conflict`; no fixture variants (stale PO snapshot, malicious document, conflict patch); compile-time check of mutation pointers against the tool schema.
+- Missing suite cases: `schema-change` (refused), `stale-po`, `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
+- The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
+- The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
+- No Linux or CI run of this slice; nothing pushed or committed.
+
+**Smallest next task:** `schema_mutation` (JSON-pointer rename/remove on the response body, hashes of original and mutated body in the event) plus the compile-time pointer check, then the stale PO snapshot, injection document and conflict patch fixtures, then the resilient agent.
+
+---
+
+## M2: durable healthy execution (accepted 2026-11-11)
+
+All six M2 tasks are implemented for the healthy path with the naive agent. CI passed for commit `821db83` (user-reported 2026-11-11). Faults and the resilient agent are M3: runs needing unimplemented ones end in `error` (`FAULTS_NOT_IMPLEMENTED`, `ADAPTER_NOT_IMPLEMENTED`), never as a fake pass.
 
 **Implemented** (decisions D-025..D-027):
 - Queue (`storage/queue.py`): `FOR UPDATE SKIP LOCKED` claim with a fresh attempt and fencing-token bump, 30 s leases, heartbeat that cannot revive an expired lease, reaper (`worker_lost`, replacement attempt, 2-attempt cap -> run `error` / `INFRA_WORKER_LOST`), immediate `abandon` for the supervisor, separate grading claim with a 3-delivery cap.
@@ -32,7 +62,7 @@ All six M2 tasks are implemented for the healthy path with the naive agent. CI h
 - Wall/monotonic clock are used for deadlines and event timestamps; no clock-injection tests beyond the real-deadline test.
 - Idempotency-key retention job, DB-outage, disk-full and load tests (M7).
 
-**Smallest next task (M3):** the pure fault matcher (`faults/`: stable SHA-256 sampling, stage ordering, ambiguity checks) with property tests, then wire `fault.decided` into the gateway.
+**Smallest next task (M3):** done as slice 1; see the M3 section above.
 
 ---
 
@@ -140,4 +170,4 @@ All M1 tasks from IMPLEMENTATION.md are implemented, except generating the typed
 
 ## Next action
 
-Continue M2 with the smallest next task named in the M2 section. Still open: CODEOWNERS rules (needs maintainer handle), license (O-003), branch protection.
+Continue M3 with the smallest next task named in the M3 section (payload-mutating effects and fixtures). Still open: CODEOWNERS rules (needs maintainer handle), license (O-003), branch protection.

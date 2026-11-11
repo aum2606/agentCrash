@@ -151,6 +151,7 @@ class AttemptCounters:
     steps: int
     logical_time_ms: int
     ordinals: dict[tuple[str, str], int] = field(default_factory=dict)  # (actor, tool) -> count
+    applications: dict[str, int] = field(default_factory=dict)  # fault rule id -> times applied
 
 
 class AttemptTx(Protocol):

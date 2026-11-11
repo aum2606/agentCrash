@@ -22,6 +22,7 @@ from agentcrash.settings import Settings
 from .helpers import ROOT
 
 TOKEN = "r" * 43
+N_SCENARIOS = len(list((ROOT / "scenarios" / "invoice" / "v1").glob("*.yaml")))
 SCENARIO_YAML = (ROOT / "scenarios" / "invoice" / "v1" / "invoice-429.yaml").read_bytes()
 RUN = {
     "schema_version": "1.0",
@@ -117,7 +118,11 @@ def test_dev_init_seeds_idempotently_and_never_overwrites_the_token(
 ) -> None:
     settings = Settings(root=ROOT, database_url=database_url, token_path=tmp_path / "x" / "token")
     first = dev_init(settings)
-    assert (first.token_created, first.scenarios_created, first.scenarios_unchanged) == (True, 2, 0)
+    assert (first.token_created, first.scenarios_created, first.scenarios_unchanged) == (
+        True,
+        N_SCENARIOS,
+        0,
+    )
     assert first.agents == 2
     token = settings.token_path.read_text(encoding="utf-8")
     assert len(token.strip()) >= 43
@@ -126,12 +131,12 @@ def test_dev_init_seeds_idempotently_and_never_overwrites_the_token(
     assert (second.token_created, second.scenarios_created, second.scenarios_unchanged) == (
         False,
         0,
-        2,
+        N_SCENARIOS,
     )
     assert settings.token_path.read_text(encoding="utf-8") == token  # untouched
     with clean_engine.connect() as conn:
         assert conn.execute(text("SELECT count(*) FROM agent_versions")).scalar() == 2
-        assert conn.execute(text("SELECT count(*) FROM scenario_versions")).scalar() == 2
+        assert conn.execute(text("SELECT count(*) FROM scenario_versions")).scalar() == N_SCENARIOS
 
 
 def test_dev_init_cli_reports_and_refuses_an_unmigrated_database(
@@ -146,7 +151,7 @@ def test_dev_init_cli_reports_and_refuses_an_unmigrated_database(
         mp.setenv("AGENTCRASH_DATABASE_URL", database_url.render_as_string(hide_password=False))
         ok = CliRunner().invoke(cli, ["dev", "init"])
         assert ok.exit_code == 0, ok.output
-        assert "token created" in ok.output and "scenarios created=2" in ok.output
+        assert "token created" in ok.output and f"scenarios created={N_SCENARIOS}" in ok.output
 
         with clean_engine.begin() as conn:  # simulate a database that was never migrated
             head = conn.execute(text("SELECT version_num FROM alembic_version")).scalar_one()

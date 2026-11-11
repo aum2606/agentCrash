@@ -10,7 +10,7 @@ import urllib.error
 import urllib.request
 from typing import Any
 
-from agentcrash.domain.runtime import AttemptEnded, ToolRequest, ToolResponse
+from agentcrash.domain.runtime import AttemptEnded, ToolRequest, ToolResponse, ToolTimeout
 
 # Control refusals after which the agent must stop (the supervisor knows the reason).
 _ENDED = frozenset({"STALE_ATTEMPT", "ATTEMPT_CANCELLED", "BUDGET_EXCEEDED", "ATTEMPT_FINISHED"})
@@ -62,9 +62,11 @@ class HttpToolClient:
         self._t = transport
 
     async def call(self, request: ToolRequest) -> ToolResponse:
-        return ToolResponse.model_validate(
-            await self._t.post("/internal/v1/tool-calls", request.model_dump(mode="json"))
-        )
+        reply = await self._t.post("/internal/v1/tool-calls", request.model_dump(mode="json"))
+        if reply.get("kind") == "transport_error":
+            error = reply["error"]
+            raise ToolTimeout(str(error["stage"]), int(error["elapsed_ms"]))
+        return ToolResponse.model_validate(reply)
 
     async def step(self, note: str) -> None:
         await self._t.post("/internal/v1/agent/step", {"note": note})
