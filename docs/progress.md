@@ -1,8 +1,8 @@
 # Progress ledger
 
-Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 4 done locally, not accepted** (slices 1-3 are commits `af3f4ba`, `1cd6a80`, `436e48a`; slice 4 is uncommitted; nothing pushed; CI has run none of them).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 5 done locally, not accepted** (slices 1-4 are commits `af3f4ba`, `1cd6a80`, `436e48a`, `d975ab1`; slice 5 is uncommitted; nothing pushed; CI has run none of them).
 
-## M3: fault engine and resilient agent (slices 1-4 of ~5; not accepted)
+## M3: fault engine and resilient agent (slices 1-5 of ~6; not accepted)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -44,14 +44,21 @@ Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed 
 - Tests added: 5 parser unit tests, an architecture test, 2 gateway tests (document replacement; conflict with a refreshed same-key retry winning and exactly one competing event), 2 suite cases. Mutation checks (caught, restored): document text not replaced, naive stops obeying documents, parser cap removed, conflict never applied, conflict attributed to the agent, conflict without version bump.
 - Final run: `agentcrash check` passed; 277 non-DB tests passed; integration 130 passed (175 s). The two intermittent failures noted under slice 2 did not recur and remain unexplained.
 
+**Slice 5: resilient agent** (decision D-033):
+- `agents/resilient.py` is registered and runnable (`invoice-resilient` 1.0.0): typed checks, age-based freshness with one forced refresh, bounded retries with the contract's backoff and seeded jitter, same-key writes with receipt reconciliation, CAS refresh, document read but never interpreted.
+- Results through the real worker and child process: it passes all ten cases, each with exactly one ledger posting, a chain-valid trace and no failed grader (including the informational `recovery.observed` where present). Specific behavior asserted from events: 429 waits at least the 1000 ms hint (and at most 1100); a pre-commit timeout is followed by a receipt lookup (404) and a same-key retry; a post-commit timeout posts once and reconciles by receipt; a renamed field gets exactly one `force_refresh` read; a stale snapshot is replaced before posting (10000 from version 2); the injected document causes no forbidden call or unsafe attempt; a version conflict is resolved by re-reading and posting again under the same key (expected versions 1 then 2). Same manifest twice gives identical digest and final-state hash (429, CAS conflict, post-commit timeout); different seeds change only the jitter.
+- Mutation checks (each caught, then restored): age check removed, retry-after ignored, receipt reconcile removed, invoice never refreshed, forced refresh removed, fresh key on every retry.
+- Adapter-missing guard: the old "resilient has no adapter" test now withdraws the adapter with a monkeypatch to prove the guard still fails closed.
+- Final run: `agentcrash check` passed; 277 non-DB tests passed; integration 152 passed (289 s). One `ResourceWarning` set (unclosed connections and log files in older M1/M2 tests) appears in the summary; not from this slice, not fixed. The two intermittent failures noted under slice 2 did not recur and remain unexplained.
+
 **Not done / limits:**
 - Every fault effect is implemented; unimplemented ones would still be refused by the supervisor guard; no `expected_demo` per-agent metadata (the model has one verdict).
-- The resilient agent, loop warning and failure classification do not exist, so "resilient passes all 10" is unproven. The naive agent's results are asserted in `tests/integration/test_fault_suite.py` from the IMPLEMENTATION.md table, but not against machine-readable `expected_demo` metadata (the model cannot hold one per agent), so that acceptance wording is only partly met.
+- Loop warning/resource termination and failure classification (M3 task 5) are not implemented. The resilient agent passes all ten cases in my tests, but the formal 10-case x 2-agent acceptance run and its gate are M5. The naive agent's results are asserted in `tests/integration/test_fault_suite.py` from the IMPLEMENTATION.md table, but not against machine-readable `expected_demo` metadata (the model cannot hold one per agent), so that acceptance wording is only partly met.
 - The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
 - The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
 - No Linux or CI run of this slice; nothing pushed or committed.
 
-**Smallest next task:** the resilient agent (`invoice-resilient` 1.0.0 in the adapter registry: typed body checks, age-based freshness with force refresh, bounded retry with the contract's backoff and seeded jitter, same-key retry and receipt reconciliation, CAS refresh, documents as data), tested against all ten cases; then loop warning and failure classification; then the 10-case acceptance run.
+**Smallest next task:** loop warning (3 consecutive identical read attempts without progress) and hard-budget termination as gateway evidence, a looping test driver and the negative fixtures (permanent failure, looping, unsafe candidate, incomplete evidence) from IMPLEMENTATION.md section 4, then failure classification; then decide whether M3 is ready for acceptance and push so CI can run it.
 
 ---
 

@@ -14,6 +14,7 @@ import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import Engine, text
 
+from agentcrash.agents.registry import ADAPTERS
 from agentcrash.api.app import create_app
 from agentcrash.bootstrap import default_registry
 from agentcrash.domain.events import chain_problem, observable_digest
@@ -212,19 +213,15 @@ def test_same_manifest_gives_the_same_observable_digest_and_state(world: World) 
 # --- unsupported work fails loudly, never as a fake pass ------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("scenario", "agent", "code"),
-    [
-        ("invoice-healthy", "invoice-resilient", "ADAPTER_NOT_IMPLEMENTED"),
-    ],
-)
-def test_work_the_engine_cannot_do_yet_ends_in_error_not_a_pass(
-    world: World, scenario: str, agent: str, code: str
+def test_an_agent_without_an_adapter_ends_in_error_not_a_pass(
+    world: World, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    run_id = submit_run(world.store, scenario=scenario, agent=agent)
+    # Both reference agents run now; withdraw one to prove the guard still fails closed.
+    monkeypatch.delitem(ADAPTERS, ("invoice-resilient", "1.0.0"))
+    run_id = submit_run(world.store, scenario="invoice-healthy", agent="invoice-resilient")
     world.drain(world.worker())
     run = world.run(run_id)
-    assert (run.status, run.verdict, run.error_code) == ("error", None, code)
+    assert (run.status, run.verdict, run.error_code) == ("error", None, "ADAPTER_NOT_IMPLEMENTED")
     assert world.one("SELECT count(*) FROM evaluations") == 0
     assert world.one("SELECT count(*) FROM tool_calls") == 0  # the agent never ran
 
