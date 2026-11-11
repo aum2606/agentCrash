@@ -59,3 +59,11 @@ def test_checker_detects_a_violation(tmp_path: Path) -> None:
     bad = tmp_path / "bad.py"
     bad.write_text("from agentcrash.api.app import create_app\nimport agentcrash.cli\n")
     assert internal_imports(bad) == {"api", "cli"}
+
+
+def test_the_intentionally_vulnerable_parser_is_imported_only_by_the_naive_agent() -> None:
+    allowed = {PKG / "agents" / "naive.py", PKG / "agents" / "insecure_demo.py"}
+    for path in PKG.rglob("*.py"):
+        if path in allowed:
+            continue
+        assert "insecure_demo" not in path.read_text(encoding="utf-8"), path.relative_to(PKG)

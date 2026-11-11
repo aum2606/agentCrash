@@ -85,6 +85,10 @@ def default_registry(root: Path) -> Registry:
         graders=graders,
         agents=dict(AGENTS),
         stale_snapshots=snapshots,
+        conflict_patches=frozenset(
+            pid for b in bundles for pid in b.faults.get("conflict_patches", {})
+        ),
+        document_fixtures=frozenset(did for b in bundles for did in b.faults.get("documents", {})),
     )
 
 

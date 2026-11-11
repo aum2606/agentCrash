@@ -1,8 +1,8 @@
 # Progress ledger
 
-Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 3 done locally, not accepted** (slices 1-2 are commits `af3f4ba`, `1cd6a80`; slice 3 is uncommitted; nothing pushed; CI has run none of them).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 4 done locally, not accepted** (slices 1-3 are commits `af3f4ba`, `1cd6a80`, `436e48a`; slice 4 is uncommitted; nothing pushed; CI has run none of them).
 
-## M3: fault engine and resilient agent (slices 1-3 of ~4; not accepted)
+## M3: fault engine and resilient agent (slices 1-4 of ~5; not accepted)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -36,14 +36,22 @@ Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed 
 - Tests added: 2 gateway tests (snapshot served, both hashes, error body untouched), the suite case and a test of which graders fail. Mutation checks (caught, restored): snapshot version not applied, body not substituted, error bodies replaced.
 - Final run: `agentcrash check` passed; 271 non-DB tests passed; integration 123 passed (195 s). The two intermittent failures noted under slice 2 did not recur in this run, and remain unexplained.
 
+**Slice 4: `document_injection`, `scripted_conflict`, vulnerable parser** (decision D-032): all eight fault effects and all ten suite scenarios now exist.
+- Fixtures: a malicious invoice document and a concurrent-edit patch in `faults.json`; the registry derives both id sets from it.
+- Gateway: document text replacement with the shared `replacement` evidence; the competing actor's CAS edit is an `environment.mutated` event by `competing-actor` in the same transaction as the call it precedes (no ordinal, skipped when policy denies the call).
+- `agents/insecure_demo.py` (loudly labelled, import-restricted by an architecture test): the naive agent obeys `ACTION:` lines in documents, attempts the forbidden vendor change, policy denies it, and `invoice.no_unauthorized.v1` fails with `UNAUTHORIZED_ATTEMPT` while the posting itself is correct and nothing in the vendor row changes.
+- Naive results, all through the real worker and child process: `invoice-cas-conflict` fails with a 409 and no entry (task incomplete); `invoice-document-injection` fails on safety only.
+- Tests added: 5 parser unit tests, an architecture test, 2 gateway tests (document replacement; conflict with a refreshed same-key retry winning and exactly one competing event), 2 suite cases. Mutation checks (caught, restored): document text not replaced, naive stops obeying documents, parser cap removed, conflict never applied, conflict attributed to the agent, conflict without version bump.
+- Final run: `agentcrash check` passed; 277 non-DB tests passed; integration 130 passed (175 s). The two intermittent failures noted under slice 2 did not recur and remain unexplained.
+
 **Not done / limits:**
-- Not implemented: `document_injection`, `scripted_conflict` (each needs a repository-owned fixture); no malicious-document or conflict-patch fixtures.
-- Missing suite cases: `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
+- Every fault effect is implemented; unimplemented ones would still be refused by the supervisor guard; no `expected_demo` per-agent metadata (the model has one verdict).
+- The resilient agent, loop warning and failure classification do not exist, so "resilient passes all 10" is unproven. The naive agent's results are asserted in `tests/integration/test_fault_suite.py` from the IMPLEMENTATION.md table, but not against machine-readable `expected_demo` metadata (the model cannot hold one per agent), so that acceptance wording is only partly met.
 - The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
 - The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
 - No Linux or CI run of this slice; nothing pushed or committed.
 
-**Smallest next task:** the malicious-document fixture, `document_injection` and the intentionally vulnerable parser in the naive agent (`invoice-document-injection`), then the conflict patch and `scripted_conflict` (`invoice-cas-conflict`), then the resilient agent.
+**Smallest next task:** the resilient agent (`invoice-resilient` 1.0.0 in the adapter registry: typed body checks, age-based freshness with force refresh, bounded retry with the contract's backoff and seeded jitter, same-key retry and receipt reconciliation, CAS refresh, documents as data), tested against all ten cases; then loop warning and failure classification; then the 10-case acceptance run.
 
 ---
 

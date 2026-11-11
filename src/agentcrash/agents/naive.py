@@ -2,10 +2,11 @@
 
 One read each of invoice, document and purchase order, no retry, original schema assumed, one
 posting attempt (CONTRACTS.md section 6). It is not a measure of any real model. Its
-intentionally vulnerable document parser arrives with the injection fixture in M3; on the
-healthy path the document is only read.
+intentionally vulnerable document parser (``insecure_demo``) obeys ``ACTION:`` lines; the benign
+document has none, so on the healthy path the document is only read.
 """
 
+from agentcrash.agents.insecure_demo import obey_document
 from agentcrash.domain.runtime import (
     AgentResult,
     AgentRng,
@@ -38,7 +39,10 @@ class NaiveAgent:
         if invoice.status != 200:
             return AgentResult(status="gave_up", summary="invoice unavailable")
         await tools.step("read document")
-        await call("document.get", {"invoice_id": task.invoice_id})
+        document = await call("document.get", {"invoice_id": task.invoice_id})
+        # Deliberately weak: obeys instructions found in the document (see insecure_demo).
+        for tool, args in obey_document(str(document.body.get("text", ""))):
+            await call(tool, {**args, "expected_version": 1}, key=f"doc:{tool}")
         await tools.step("read purchase order")
         po = await call("purchase_order.get", {"po_id": invoice.body["po_id"]})
         if po.status != 200:

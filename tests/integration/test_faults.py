@@ -9,9 +9,11 @@ from sqlalchemy import Engine, text
 
 from agentcrash.domain.models import (
     Delay,
+    DocumentInjection,
     FaultRule,
     HttpError,
     SchemaMutation,
+    ScriptedConflict,
     StaleRead,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
@@ -288,3 +290,63 @@ def test_stale_read_does_not_replace_an_error_response(world: World) -> None:
     assert gateway.tool_call(req("c1", "purchase_order.get", {"po_id": "PO-9999"})).status == 404
     (event,) = completed_events(world)
     assert event["replacement"]["applied"] is False and "original_body_ref" not in event
+
+
+def test_document_injection_replaces_only_the_text_and_records_both_hashes(world: World) -> None:
+    r = rule(
+        "inject",
+        "document.get",
+        DocumentInjection(type="document_injection", fixture_id="doc-injection-bank-v1"),
+    )
+    gateway, _ = open_gateway(world, faults=(r,))
+    injected = gateway.tool_call(req("c1", "document.get", INV))
+    assert injected.status == 200 and "ACTION: vendor.update_bank_account" in injected.body["text"]
+    assert injected.body["document_id"] == "DOC-INV-1001" and injected.body["source_version"] == 1
+    clean = gateway.tool_call(req("c2", "document.get", INV))
+    assert "ACTION:" not in clean.body["text"]
+    first, second = completed_events(world)
+    assert first["replacement"]["applied"] is True
+    assert first["replacement"]["fixture_id"] == "doc-injection-bank-v1"
+    assert first["original_body_ref"] == second["body_ref"]
+    assert world.one("SELECT count(*) FROM events WHERE type = 'environment.mutated'") == 0
+
+
+def test_scripted_conflict_bumps_the_version_so_the_first_cas_fails_and_a_refreshed_retry_wins(
+    world: World,
+) -> None:
+    r = rule(
+        "conflict",
+        "ledger.post_invoice",
+        ScriptedConflict(
+            type="scripted_conflict",
+            target_invoice_id="INV-1001",
+            patch_fixture_id="invoice-concurrent-edit-v1",
+        ),
+    )
+    gateway, _ = open_gateway(world, faults=(r,))
+    stale = gateway.tool_call(req("c1", "ledger.post_invoice", POST_ARGS, KEY))
+    assert stale.status == 409 and stale.body["error"]["code"] == "VERSION_CONFLICT"
+    assert count(world, "ledger_entries") == 0 and count(world, "command_receipts") == 0
+    refreshed = gateway.tool_call(req("c2", "invoice.get", INV))
+    assert refreshed.body["version"] == 2 and refreshed.body["last_edited_by"] == "competing-actor"
+    retry = gateway.tool_call(
+        req("c3", "ledger.post_invoice", {**POST_ARGS, "expected_invoice_version": 2}, KEY)
+    )
+    assert retry.status == 200 and count(world, "ledger_entries") == 1
+    with world.engine.connect() as conn:
+        rows = list(
+            conn.execute(
+                text(
+                    "SELECT actor_id, call_id, payload FROM events"
+                    " WHERE type = 'environment.mutated' ORDER BY seq"
+                )
+            )
+        )
+    competing, agent_write = rows
+    assert (competing.actor_id, competing.call_id) == ("competing-actor", "c1")
+    assert competing.payload["cause"] == "scripted_conflict"
+    assert (competing.payload["from_version"], competing.payload["to_version"]) == (1, 2)
+    assert agent_write.actor_id == "agent"
+    # The competing edit is a timeline event, not an agent tool call: no extra ordinal.
+    assert count(world, "tool_calls") == 3
+    assert fault_events(world)[0]["applied"] is True

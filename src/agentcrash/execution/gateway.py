@@ -19,9 +19,11 @@ from agentcrash.domain.events import EventTooLarge, PendingEvent
 from agentcrash.domain.models import (
     Budgets,
     Delay,
+    DocumentInjection,
     FaultRule,
     HttpError,
     SchemaMutation,
+    ScriptedConflict,
     StaleRead,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
@@ -43,6 +45,7 @@ from agentcrash.environments.invoice import tools as invoice_tools
 from agentcrash.faults.matcher import RuleDecision, decide
 
 NOTE_LIMIT = 200
+COMPETING_ACTOR = "competing-actor"
 # Effects this gateway applies; the supervisor refuses scenarios needing any other.
 IMPLEMENTED_EFFECTS = frozenset(
     {
@@ -52,6 +55,8 @@ IMPLEMENTED_EFFECTS = frozenset(
         "timeout_after_commit",
         "schema_mutation",
         "stale_read",
+        "document_injection",
+        "scripted_conflict",
     }
 )
 
@@ -222,6 +227,12 @@ class Gateway:
                     now = self._advance(tx, now, effect.duration_ms, request, "delay")
             before = next((e for e in effects if e.stage == "before_dispatch" and e.terminal), None)
 
+            dispatching = denial is None and before is None
+            if dispatching:  # a trusted competing actor edits the row, then the write's CAS runs
+                for d in decisions:
+                    if d.applied and isinstance(d.rule.effect, ScriptedConflict):
+                        self._conflict(tx, request, now, d.rule.id, d.rule.effect)
+
             if denial:
                 outcome = invoice_tools.ToolOutcome(
                     denial[1], {"error": {"code": denial[2], "reason": denial[0]}}
@@ -324,6 +335,9 @@ class Gateway:
             elif isinstance(eff, StaleRead):
                 key = "replacement"
                 note["fixture_id"] = eff.snapshot_id
+            elif isinstance(eff, DocumentInjection):
+                key = "replacement"
+                note["fixture_id"] = eff.fixture_id
             else:  # the supervisor refuses scenarios whose rewriting effect is not implemented
                 raise RuntimeError(f"unimplemented payload effect {eff.type}")
             if status != 200:  # only a successful body has the shape these effects target
@@ -332,6 +346,10 @@ class Gateway:
                 extra["original_body_ref"] = f"sha256:{canonical_hash(body)}"
                 if isinstance(eff, SchemaMutation):
                     body = mutate(body, eff.pointer, eff.operation, eff.new_key)
+                elif isinstance(eff, DocumentInjection):
+                    doc = self.policy.fixtures["documents"][eff.fixture_id]
+                    note["fixture_hash"] = canonical_hash(doc)
+                    body = {**body, "text": doc["text"]}
                 else:
                     snap = self.policy.fixtures["stale_snapshots"][eff.snapshot_id]
                     note["fixture_hash"] = canonical_hash(snap)
@@ -340,6 +358,37 @@ class Gateway:
                 note["applied"] = True
             extra[key] = note
         return body, source_version, extra
+
+    def _conflict(
+        self, tx: AttemptTx, request: ToolRequest, now: int, rule_id: str, eff: ScriptedConflict
+    ) -> None:
+        """The scripted competing actor: bump the target invoice's version through the same CAS
+        the agent's write uses, so ``expected_invoice_version`` goes stale. It is not an agent
+        tool call (no ordinal) but it is in the timeline, attributed to the competing actor."""
+        patch = self.policy.fixtures["conflict_patches"][eff.patch_fixture_id]
+        row = tx.state.get(patch["entity"], eff.target_invoice_id)
+        if row is None:
+            raise RuntimeError("scripted conflict target does not exist")
+        data = {**row.data, **patch["set"], "version": row.version + 1}
+        if not tx.state.cas_update(patch["entity"], eff.target_invoice_id, row.version, data):
+            raise RuntimeError("scripted conflict lost its own CAS")
+        self._event(
+            tx,
+            "environment.mutated",
+            now,
+            {
+                "entity": patch["entity"],
+                "id": eff.target_invoice_id,
+                "from_version": row.version,
+                "to_version": row.version + 1,
+                "cause": "scripted_conflict",
+                "rule_id": rule_id,
+                "fixture_id": eff.patch_fixture_id,
+                "fixture_hash": canonical_hash(patch),
+            },
+            request.call_id,
+            COMPETING_ACTOR,
+        )
 
     def _advance(
         self, tx: AttemptTx, now: int, duration_ms: int, request: ToolRequest, cause: str
