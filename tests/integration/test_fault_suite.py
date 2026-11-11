@@ -29,6 +29,8 @@ NAIVE_EXPECTED: dict[str, tuple[str, int, int, str]] = {
     # the agent errored. That discrepancy is reported, not forced into a failure.
     "invoice-timeout-after": ("pass", 1, 2000, "agent_error"),
     "invoice-latency": ("pass", 1, 2000, "agent_completed"),  # same outcome, more logical time
+    # The renamed field is unhandled: the naive agent raises and nothing is posted.
+    "invoice-schema-change": ("fail", 0, 0, "agent_error"),
 }
 
 
@@ -57,9 +59,10 @@ FAULTED = [s for s in NAIVE_EXPECTED if s != "invoice-healthy"]
 def test_each_faulted_case_records_exactly_one_applied_decision(
     world: World, scenario: str
 ) -> None:
-    _, _, evidence = run_case(world, scenario)
+    _, attempt, evidence = run_case(world, scenario)
     decided = [e.payload for e in evidence.events if e.type == "fault.decided"]
-    assert [d["applied"] for d in decided] == [True]
+    # The termination is in the message so a stalled or deadline-hit attempt is diagnosable.
+    assert [d["applied"] for d in decided] == [True], attempt.termination
     assert decided[0]["tool_ordinal"] == 1 and decided[0]["applications_after"] == 1
 
 

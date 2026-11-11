@@ -49,8 +49,10 @@ class NaiveAgent:
             {
                 "invoice_id": invoice.body["id"],
                 "po_id": po.body["id"],
-                "amount_minor": invoice.body["amount_minor"],
-                "currency": invoice.body["currency"],
+                # Trusts the purchase order's amount and field names: the weakness the schema-change
+                # and stale-PO cases expose (a renamed field raises KeyError, an old PO posts 9000).
+                "amount_minor": po.body["approved_amount_minor"],
+                "currency": po.body["currency"],
                 "expected_invoice_version": invoice.body["version"],
                 "source_po_version": po.body["version"],
             },

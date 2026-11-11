@@ -26,6 +26,13 @@ def test_supplied_429_example_compiles(registry: Registry, doc: dict[str, Any]) 
     assert len(c.content_hash) == 64
 
 
+def test_a_pointer_that_resolves_in_the_tool_body_compiles(
+    registry: Registry, doc: dict[str, Any]
+) -> None:
+    doc["faults"][0]["effect"] = mutation("remove", "/provenance/snapshot")
+    assert compile_scenario(doc, registry).scenario.faults[0].effect.type == "schema_mutation"
+
+
 def test_compile_is_repeatable_and_idempotent(registry: Registry, doc: dict[str, Any]) -> None:
     first = compile_scenario(copy.deepcopy(doc), registry)
     again = compile_scenario(copy.deepcopy(doc), registry)
@@ -289,6 +296,24 @@ REJECTIONS: list[tuple[str, Mutation, str, str]] = [
         set_(EFFECT, mutation("rename", "/amount")),
         "/faults/0/effect",
         "INVALID_MUTATION",
+    ),
+    (
+        "pointer names nothing in the tool body",
+        set_(EFFECT, mutation("remove", "/no_such_field")),
+        "/faults/0/effect/pointer",
+        "POINTER_NOT_FOUND",
+    ),
+    (
+        "pointer descends through a leaf",
+        set_(EFFECT, mutation("remove", "/currency/inner")),
+        "/faults/0/effect/pointer",
+        "POINTER_NOT_FOUND",
+    ),
+    (
+        "rename onto an existing key",
+        set_(EFFECT, mutation("rename", "/approved_amount_minor", new_key="currency")),
+        "/faults/0/effect/pointer",
+        "RENAME_TARGET_EXISTS",
     ),
     (
         "root pointer",

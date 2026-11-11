@@ -3,6 +3,7 @@
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -13,6 +14,9 @@ class ToolSpec:
     mutating: bool
     deployment_forbidden: bool  # may never be granted by a scenario
     supported_effects: frozenset[str]  # fault effect types this tool may be the target of
+    # Successful response body as nested mappings (object) and None (leaf); lets the compiler
+    # reject a schema_mutation pointer that names nothing. None: the tool is not mutable.
+    body_shape: Mapping[str, Any] | None = None
 
 
 @dataclass(frozen=True)

@@ -215,7 +215,6 @@ def test_same_manifest_gives_the_same_observable_digest_and_state(world: World) 
 @pytest.mark.parametrize(
     ("scenario", "agent", "code"),
     [
-        ("invoice-schema-change", "invoice-naive", "FAULTS_NOT_IMPLEMENTED"),
         ("invoice-healthy", "invoice-resilient", "ADAPTER_NOT_IMPLEMENTED"),
     ],
 )
@@ -228,6 +227,26 @@ def test_work_the_engine_cannot_do_yet_ends_in_error_not_a_pass(
     assert (run.status, run.verdict, run.error_code) == ("error", None, code)
     assert world.one("SELECT count(*) FROM evaluations") == 0
     assert world.one("SELECT count(*) FROM tool_calls") == 0  # the agent never ran
+
+
+def test_a_manifest_needing_an_unimplemented_effect_is_refused_not_ignored(world: World) -> None:
+    from agentcrash.domain.models import FaultRule, ScriptedConflict
+
+    run_id = submit_run(world.store, scenario="invoice-429")
+    manifest = world.repo.manifest(run_id)
+    conflict = FaultRule(
+        id="cas",
+        tool="ledger.post_invoice",
+        effect=ScriptedConflict(
+            type="scripted_conflict", target_invoice_id="INV-1001", patch_fixture_id="bump"
+        ),
+    )
+    changed = manifest.model_copy(
+        update={"scenario": manifest.scenario.model_copy(update={"faults": [conflict]})}
+    )
+    supervisor = world.worker().supervisor
+    assert supervisor._unsupported(manifest) is None
+    assert supervisor._unsupported(changed) == ("FAULTS_NOT_IMPLEMENTED",)
 
 
 # --- cancellation -------------------------------------------------------------------------

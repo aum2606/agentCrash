@@ -11,6 +11,7 @@ from agentcrash.domain.models import (
     Delay,
     FaultRule,
     HttpError,
+    SchemaMutation,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
 )
@@ -202,3 +203,56 @@ def test_timeout_crosses_the_loopback_transport_as_a_transport_error(world: Worl
         assert asyncio.run(client.call(req("c2", "purchase_order.get", PO))).status == 200
     finally:
         server.stop()
+
+
+def completed_events(world: World) -> list[dict[str, Any]]:
+    with world.engine.connect() as conn:
+        rows = conn.execute(
+            text("SELECT payload FROM events WHERE type = 'tool.completed' ORDER BY seq")
+        )
+        return [r.payload for r in rows]
+
+
+def test_schema_mutation_changes_only_the_response_body_and_records_both_hashes(
+    world: World,
+) -> None:
+    r = rule(
+        "rename",
+        "purchase_order.get",
+        SchemaMutation(
+            type="schema_mutation",
+            operation="rename",
+            pointer="/approved_amount_minor",
+            new_key="approved_amount",
+        ),
+    )
+    gateway, _ = open_gateway(world, faults=(r,))
+    mutated = gateway.tool_call(req("c1", "purchase_order.get", PO))
+    assert mutated.status == 200 and "approved_amount_minor" not in mutated.body
+    assert mutated.body["approved_amount"] == 10000 and mutated.body["version"] == 2
+    clean = gateway.tool_call(req("c2", "purchase_order.get", PO))  # rule exhausted
+    assert clean.body["approved_amount_minor"] == 10000
+    first, second = completed_events(world)
+    assert first["mutation"] == {
+        "rule_id": "rename",
+        "operation": "rename",
+        "pointer": "/approved_amount_minor",
+        "applied": True,
+    }
+    assert first["original_body_ref"] == second["body_ref"]  # the original is what a clean read is
+    assert first["body_ref"] != first["original_body_ref"] and "mutation" not in second
+
+
+def test_schema_mutation_on_an_error_response_is_recorded_as_not_applied(world: World) -> None:
+    r = rule(
+        "rm",
+        "purchase_order.get",
+        SchemaMutation(type="schema_mutation", operation="remove", pointer="/currency"),
+    )
+    gateway, _ = open_gateway(world, faults=(r,))
+    missing = gateway.tool_call(req("c1", "purchase_order.get", {"po_id": "PO-9999"}))
+    assert missing.status == 404
+    (event,) = completed_events(world)
+    assert event["mutation"]["applied"] is False
+    assert event["mutation"]["reason"] == "non_success_status"
+    assert "original_body_ref" not in event

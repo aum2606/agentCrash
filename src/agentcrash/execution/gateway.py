@@ -21,9 +21,11 @@ from agentcrash.domain.models import (
     Delay,
     FaultRule,
     HttpError,
+    SchemaMutation,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
 )
+from agentcrash.domain.pointer import mutate
 from agentcrash.domain.redaction import redact
 from agentcrash.domain.registry import ToolSpec
 from agentcrash.domain.runtime import (
@@ -42,7 +44,7 @@ from agentcrash.faults.matcher import decide
 NOTE_LIMIT = 200
 # Effects this gateway applies; the supervisor refuses scenarios needing any other.
 IMPLEMENTED_EFFECTS = frozenset(
-    {"delay", "http_error", "timeout_before_commit", "timeout_after_commit"}
+    {"delay", "http_error", "timeout_before_commit", "timeout_after_commit", "schema_mutation"}
 )
 
 
@@ -261,19 +263,29 @@ class Gateway:
                 )  # fmt: skip
             else:
                 body = redact(outcome.body)
-                self._event(
-                    tx,
-                    "tool.completed",
-                    now,
-                    {
-                        "tool": request.tool,
-                        "status": outcome.status,
-                        "body_ref": f"sha256:{canonical_hash(body)}",
-                        "source_version": outcome.source_version,
-                    },
-                    request.call_id,
-                    request.actor_id,
-                )
+                completed: dict[str, Any] = {
+                    "tool": request.tool,
+                    "status": outcome.status,
+                    "source_version": outcome.source_version,
+                }
+                for d in decisions:  # at most one payload mutation per call (matcher-enforced)
+                    if d.applied and isinstance(d.rule.effect, SchemaMutation):
+                        eff = d.rule.effect
+                        note: dict[str, Any] = {
+                            "rule_id": d.rule.id,
+                            "operation": eff.operation,
+                            "pointer": eff.pointer,
+                            "applied": False,
+                        }
+                        if outcome.status != 200:  # only a successful body has the mutable shape
+                            note["reason"] = "non_success_status"
+                        else:
+                            completed["original_body_ref"] = f"sha256:{canonical_hash(body)}"
+                            body = mutate(body, eff.pointer, eff.operation, eff.new_key)
+                            note["applied"] = True
+                        completed["mutation"] = note
+                completed["body_ref"] = f"sha256:{canonical_hash(body)}"
+                self._event(tx, "tool.completed", now, completed, request.call_id, request.actor_id)
                 response = ToolResponse(
                     status=outcome.status,
                     body=body,

@@ -8,6 +8,7 @@ from pydantic import ValidationError
 from agentcrash.domain.canonical import canonical_hash
 from agentcrash.domain.diagnostics import Diagnostic, ScenarioValidationError, from_pydantic
 from agentcrash.domain.models import CompiledScenario, FaultRule, GraderRef, Scenario
+from agentcrash.domain.pointer import check_shape
 from agentcrash.domain.registry import EnvironmentSpec, Registry
 
 
@@ -66,6 +67,14 @@ def _check_faults(
                     f"{base}/effect/type", "INVALID_TARGET", "Effect cannot target this tool"
                 )
             )
+        elif eff.type == "schema_mutation":
+            problem = (
+                check_shape(tool.body_shape, eff.pointer, eff.operation, eff.new_key)
+                if tool.body_shape is not None
+                else "POINTER_NOT_FOUND"
+            )
+            if problem is not None:
+                diags.append(Diagnostic(f"{base}/effect/pointer", problem))
         elif eff.type == "stale_read" and reg.stale_snapshots.get(eff.snapshot_id) != rule.tool:
             diags.append(Diagnostic(f"{base}/effect/snapshot_id", "UNKNOWN_REFERENCE"))
         elif eff.type == "document_injection" and eff.fixture_id not in reg.document_fixtures:

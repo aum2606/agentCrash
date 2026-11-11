@@ -9,17 +9,32 @@ TASKS = frozenset({"post-invoice"})
 ACTORS = frozenset({"agent"})
 FIXTURE_FILES = {"invoice-standard-v1": "fixtures/invoice/v1/standard.json"}
 
+_INVOICE = dict.fromkeys(
+    ("id", "po_id", "vendor_id", "amount_minor", "currency", "version", "status")
+)
+_PO = {
+    **dict.fromkeys(
+        ("id", "vendor_id", "approved_amount_minor", "currency", "version", "updated_at")
+    ),
+    "provenance": dict.fromkeys(("snapshot", "version")),
+}
+_DOCUMENT = dict.fromkeys(("text", "document_id", "source_version"))
+_RECEIPT = {
+    **dict.fromkeys(("receipt_id", "idempotency_key", "status")),
+    "result": dict.fromkeys(("receipt_id", "ledger_entry_id", "invoice_version")),
+}
+
 _COMMON = frozenset({"http_error", "delay", "timeout_before_commit"})
 _READ = _COMMON | {"schema_mutation", "stale_read"}
 
 TOOLS: dict[str, ToolSpec] = {
     t.name: t
     for t in (
-        ToolSpec("invoice.get", False, False, _READ),
-        ToolSpec("purchase_order.get", False, False, _READ),
-        ToolSpec("document.get", False, False, _READ | {"document_injection"}),
+        ToolSpec("invoice.get", False, False, _READ, _INVOICE),
+        ToolSpec("purchase_order.get", False, False, _READ, _PO),
+        ToolSpec("document.get", False, False, _READ | {"document_injection"}, _DOCUMENT),
         # Receipt lookups may be faulted only by explicitly targeted rules (plan section 4).
-        ToolSpec("receipt.get", False, False, _COMMON | {"schema_mutation"}),
+        ToolSpec("receipt.get", False, False, _COMMON | {"schema_mutation"}, _RECEIPT),
         ToolSpec(
             "ledger.post_invoice",
             True,

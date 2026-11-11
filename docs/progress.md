@@ -1,8 +1,8 @@
 # Progress ledger
 
-Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 1 done locally, not accepted** (uncommitted, unpushed, CI has not run it).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 2 done locally, not accepted** (slice 1 is commit `af3f4ba`; slice 2 is uncommitted; nothing pushed; CI has not run either).
 
-## M3: fault engine and resilient agent (slice 1 of ~4; not accepted)
+## M3: fault engine and resilient agent (slices 1-2 of ~4; not accepted)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -21,14 +21,22 @@ Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed 
 - Mutation checks, each caught then restored: ignore `max_applications`; match the wrong tool; dispatch despite a pre-commit timeout; decide faults for denied calls.
 - Fixes along the way: dev-init tests hard-coded two scenarios (now derived from the scenario directory); a grouped JSON SQL query failed under server-side parameters (counts are now done in Python over a handful of rows).
 
+**Slice 2: `schema_mutation`** (decision D-030):
+- `domain/pointer.py` (object-key JSON Pointer check and copy-on-write mutate), `ToolSpec.body_shape` for the four mutable tools, and a compile-time check: `POINTER_NOT_FOUND`, `RENAME_TARGET_EXISTS`.
+- Gateway applies the mutation to a 200 body only and records `original_body_ref` plus `mutation{...}` on `tool.completed`; an applied rule on an error status is recorded as not applied.
+- `invoice-schema-change` now executes. The naive agent posts the purchase order's approved amount, so a renamed field raises and nothing is posted (`fail`, `agent_error`); healthy results are unchanged.
+- Tests added: `test_pointer.py` (unit and Hypothesis), 3 compiler rejections plus one accepted nested pointer, 2 gateway tests, the suite case, and a test that a manifest needing an unimplemented effect is still refused. Mutation checks (each caught, then restored): mutation made a no-op, mutation applied to error bodies, compiler pointer check disabled.
+- Final run this session: `agentcrash check` passed; 271 non-DB tests passed; integration **118 passed** (149 s).
+- **Unexplained intermittent integration failures (2 seen across about 15 full-file or full-suite runs; the first test never failed in 7 isolated runs):** `test_child_killed_after_the_write_commits_is_replaced_from_a_fresh_fixture` (M2; failed in two runs, message not captured) and `test_each_faulted_case_records_exactly_one_applied_decision[invoice-timeout-after]` (no `fault.decided` event, so the agent never reached the post). The second came from a run that took 1123 s instead of about 150 s, so the machine stalled and a real wall-clock limit (120 s attempt deadline, 30 s leases) plausibly fired; the first test kills only the Windows launcher process, which may race with an orphaned agent. Neither cause is proven. The assertion now reports the attempt's termination so the next occurrence is diagnosable. These tests rely on real wall-clock limits, which CLAUDE.md prefers to avoid; do not treat them as deterministic until this is resolved.
+
 **Not done / limits:**
-- No fault effect that mutates a payload or needs a fixture: `schema_mutation`, `stale_read`, `document_injection`, `scripted_conflict`; no fixture variants (stale PO snapshot, malicious document, conflict patch); compile-time check of mutation pointers against the tool schema.
-- Missing suite cases: `schema-change` (refused), `stale-po`, `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
+- Not implemented: `stale_read`, `document_injection`, `scripted_conflict` (each needs a repository-owned fixture); no fixture variants (stale PO snapshot, malicious document, conflict patch).
+- Missing suite cases: `stale-po`, `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
 - The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
 - The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
 - No Linux or CI run of this slice; nothing pushed or committed.
 
-**Smallest next task:** `schema_mutation` (JSON-pointer rename/remove on the response body, hashes of original and mutated body in the event) plus the compile-time pointer check, then the stale PO snapshot, injection document and conflict patch fixtures, then the resilient agent.
+**Smallest next task:** the stale PO snapshot fixture and `stale_read` (registry entry so the existing `UNKNOWN_REFERENCE` check passes, `invoice-stale-po` scenario), then the injection document and conflict patch fixtures, then the resilient agent.
 
 ---
 
