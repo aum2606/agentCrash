@@ -10,6 +10,7 @@ from dataclasses import dataclass
 
 from agentcrash.domain.evidence import verdict_of
 from agentcrash.domain.ports import GradeClaim
+from agentcrash.evaluation.classify import classify
 from agentcrash.evaluation.graders import evaluate
 from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.queue import JobQueue
@@ -31,6 +32,7 @@ class Worker:
         evidence = self.repo.evidence(claim.attempt_id, manifest.budgets, {})
         grades = evaluate(evidence, manifest.graders)
         verdict = verdict_of(grades, evidence.termination)
+        primary, findings = classify(evidence, grades, verdict)
         self.repo.store_evaluation(
             claim.run_id,
             claim.attempt_id,
@@ -39,6 +41,8 @@ class Worker:
             verdict,
             grades,
             claim.job_id,
+            primary,
+            findings,
         )
         return verdict
 

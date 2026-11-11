@@ -1,8 +1,8 @@
 # Progress ledger
 
-Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 5 done locally, not accepted** (slices 1-4 are commits `af3f4ba`, `1cd6a80`, `436e48a`, `d975ab1`; slice 5 is uncommitted; nothing pushed; CI has run none of them).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 6 implemented and verified locally, not accepted** (slices 1-5 are commits `af3f4ba`, `1cd6a80`, `436e48a`, `d975ab1`, `22c58a1`; slice 6 is uncommitted; nothing pushed; CI has run none of them).
 
-## M3: fault engine and resilient agent (slices 1-5 of ~6; not accepted)
+## M3: fault engine and resilient agent (slices 1-6; not accepted)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -51,14 +51,24 @@ Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed 
 - Adapter-missing guard: the old "resilient has no adapter" test now withdraws the adapter with a monkeypatch to prove the guard still fails closed.
 - Final run: `agentcrash check` passed; 277 non-DB tests passed; integration 152 passed (289 s). One `ResourceWarning` set (unclosed connections and log files in older M1/M2 tests) appears in the summary; not from this slice, not fixed. The two intermittent failures noted under slice 2 did not recur and remain unexplained.
 
+**Slice 6: loop warning, resource termination evidence, failure classification** (decision D-034):
+- Gateway: a non-mutating call that is the third identical read in a row with the same coarse outcome carries `loop_suspected` on `tool.completed` / `tool.transport_failed` (additive, heuristic only). `AttemptTx.recent_calls` supports it. Hard budgets were already enforced in M2.
+- `evaluation/classify.py` (pure): all findings kept, primary reason by `REASON_PRIORITY` (extended with `SCHEMA_UNHANDLED`, `RETRY_EXHAUSTED`, `LOOP_SUSPECTED`; specific task causes rank above generic `TASK_INCOMPLETE`), none for a passing run. Stored via **migration 0003** (`evaluations.primary_reason`, `evaluations.findings`) and returned by `GET /runs/{id}/evaluations`; OpenAPI regenerated. **Additive contract extension awaiting maintainer confirmation.**
+- Negative fixture `scenarios/invoice/v1/negative/neg-permanent-failure.yaml` (invoice read always 503): the resilient agent makes exactly 3 attempts, posts nothing and is classified `RETRY_EXHAUSTED` with `TASK_INCOMPLETE` and `LOOP_SUSPECTED` kept. The unsafe-candidate (naive on document injection: `UNAUTHORIZED_ATTEMPT`) and unhandled-schema (naive on schema change: `SCHEMA_UNHANDLED`) cases reuse suite scenarios. Looping is driven through the gateway directly; no looping agent is shipped. The incomplete-evidence case is covered by unit tests over hand-built evidence (`TRACE_INCOMPLETE` outranks everything).
+- Tests added: `tests/unit/test_classify.py` (20) and `tests/integration/test_loop_and_classification.py` (10: streak, reset, progress, writes never flagged, hard budget at the gateway, passing run has no reason, permanent failure end to end and over the API, unsafe candidate, unhandled schema, a real run stopped by a 2-call budget). Mutation checks, each caught then restored: window of 4, writes can loop, outcome ignored, trace flag ignored, classification not stored, priority order changed.
+- Test fixtures updated for the head revision (`0003`), recursive scenario discovery (`rglob`) and the new scenario directory.
+- **Verification actually completed:** `agentcrash check` passed; 297 non-DB tests passed; the 10 new integration tests passed on their own.
+- **Integration verification, completed in a second pass:** the single full-suite run had been killed for low memory (not a test failure), so every integration file was re-run separately, one pytest invocation at a time, all against PostgreSQL 18.6 and all passing: schema + queue 23, dev-init/restart 3, API flow 23, gateway 21, faults 14, execution 20, worker process 1, fault suite 25, resilient suite 22, loop and classification 10 = **162 tests across all 11 files**. This includes the migration-drift test at head `0003` and the dev-init count over the recursive scenario directory. It was not a single combined run, so cross-file interactions are not exercised together; the two earlier unexplained intermittent failures did not recur.
+- The local development database (if any) is at migration 0002; run `uv run alembic upgrade head` before `agentcrash worker` or `agentcrash api` there.
+
 **Not done / limits:**
 - Every fault effect is implemented; unimplemented ones would still be refused by the supervisor guard; no `expected_demo` per-agent metadata (the model has one verdict).
-- Loop warning/resource termination and failure classification (M3 task 5) are not implemented. The resilient agent passes all ten cases in my tests, but the formal 10-case x 2-agent acceptance run and its gate are M5. The naive agent's results are asserted in `tests/integration/test_fault_suite.py` from the IMPLEMENTATION.md table, but not against machine-readable `expected_demo` metadata (the model cannot hold one per agent), so that acceptance wording is only partly met.
+- The resilient agent passes all ten cases in my tests, but the formal 10-case x 2-agent acceptance run and its gate are M5. The naive agent's results are asserted in `tests/integration/test_fault_suite.py` from the IMPLEMENTATION.md table, but not against machine-readable `expected_demo` metadata (the model cannot hold one per agent), so that acceptance wording is only partly met.
 - The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
 - The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
 - No Linux or CI run of this slice; nothing pushed or committed.
 
-**Smallest next task:** loop warning (3 consecutive identical read attempts without progress) and hard-budget termination as gateway evidence, a looping test driver and the negative fixtures (permanent failure, looping, unsafe candidate, incomplete evidence) from IMPLEMENTATION.md section 4, then failure classification; then decide whether M3 is ready for acceptance and push so CI can run it.
+**Smallest next task:** commit slice 6 with approval, then push so CI can run M3 on Linux. M3 acceptance still needs CI and a maintainer look at D-034's priority order and the two new columns.
 
 ---
 

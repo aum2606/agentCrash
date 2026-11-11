@@ -284,6 +284,8 @@ evaluations = Table(
     Column("snapshot_hash", Text),
     Column("verdict", Text, nullable=False),
     Column("grades", JSONB, nullable=False),
+    Column("primary_reason", Text),
+    Column("findings", JSONB, nullable=False, server_default=text("'[]'::jsonb")),
     Column("evaluated_at", TIMESTAMP(timezone=True), nullable=False, server_default=func.now()),
     UniqueConstraint("attempt_id", "grader_set_hash"),
     CheckConstraint(_in("verdict", VERDICTS), name="evaluations_verdict_check"),

@@ -11,7 +11,7 @@ from uuid import UUID
 
 from pydantic import Field
 
-from agentcrash.domain.evidence import Grade
+from agentcrash.domain.evidence import Finding, Grade
 from agentcrash.domain.models import (
     CompiledScenario,
     Id,
@@ -132,6 +132,8 @@ class EvaluationRecord(Strict):
     snapshot_hash: str | None
     verdict: Verdict
     grades: list[Grade]
+    primary_reason: str | None
+    findings: list[Finding]
     evaluated_at: datetime
 
 

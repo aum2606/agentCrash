@@ -46,6 +46,9 @@ from agentcrash.faults.matcher import RuleDecision, decide
 
 NOTE_LIMIT = 200
 COMPETING_ACTOR = "competing-actor"
+# Loop heuristic (ENGINEERING_PLAN.md section 3): this many identical reads in a row, all with the
+# same coarse outcome, is a warning. A heuristic for the report, never a safety finding.
+LOOP_WINDOW = 3
 # Effects this gateway applies; the supervisor refuses scenarios needing any other.
 IMPLEMENTED_EFFECTS = frozenset(
     {
@@ -245,7 +248,14 @@ class Gateway:
                 outcome = invoice_tools.ToolOutcome(before.status, {"error": detail})
             elif isinstance(before, TimeoutBeforeCommit):
                 now = self._advance(tx, now, before.elapsed_ms, request, "timeout")
-                timeout = self._timeout(tx, request, now, "before_commit", before.elapsed_ms)
+                timeout = self._timeout(
+                    tx,
+                    request,
+                    now,
+                    "before_commit",
+                    before.elapsed_ms,
+                    loop=self._looping(tx, request, input_hash, "transport"),
+                )
                 outcome = None
             else:
                 outcome = invoice_tools.dispatch(
@@ -293,6 +303,8 @@ class Gateway:
                 )
                 completed.update(extra)
                 completed["source_version"] = source_version
+                if denial is None and self._looping(tx, request, input_hash, str(outcome.status)):
+                    completed["loop_suspected"] = {"consecutive_identical_reads": LOOP_WINDOW}
                 completed["body_ref"] = f"sha256:{canonical_hash(body)}"
                 self._event(tx, "tool.completed", now, completed, request.call_id, request.actor_id)
                 response = ToolResponse(
@@ -403,6 +415,20 @@ class Gateway:
         )  # fmt: skip
         return target
 
+    def _looping(
+        self, tx: AttemptTx, request: ToolRequest, input_hash: str, signature: str
+    ) -> bool:
+        """True if this read completes ``LOOP_WINDOW`` identical reads in a row that all got the
+        same coarse outcome, i.e. the agent repeats itself without making progress."""
+        spec = self.policy.tools.get(request.tool)
+        if spec is None or spec.mutating:
+            return False
+        earlier = tx.recent_calls(LOOP_WINDOW - 1)
+        return len(earlier) == LOOP_WINDOW - 1 and all(
+            c.tool == request.tool and c.input_hash == input_hash and c.signature == signature
+            for c in earlier
+        )
+
     def _timeout(
         self,
         tx: AttemptTx,
@@ -411,18 +437,22 @@ class Gateway:
         stage: str,
         elapsed_ms: int,
         committed: bool = False,
+        loop: bool = False,
     ) -> ToolTimeout:
+        payload: dict[str, Any] = {
+            "tool": request.tool,
+            "code": "TOOL_TIMEOUT",
+            "stage": stage,
+            "elapsed_ms": elapsed_ms,
+            "committed": committed,
+        }
+        if loop:
+            payload["loop_suspected"] = {"consecutive_identical_reads": LOOP_WINDOW}
         self._event(
             tx,
             "tool.transport_failed",
             now,
-            {
-                "tool": request.tool,
-                "code": "TOOL_TIMEOUT",
-                "stage": stage,
-                "elapsed_ms": elapsed_ms,
-                "committed": committed,
-            },
+            payload,
             request.call_id,
             request.actor_id,
         )

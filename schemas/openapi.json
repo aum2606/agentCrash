@@ -347,6 +347,13 @@
             "title": "Evaluated At",
             "type": "string"
           },
+          "findings": {
+            "items": {
+              "$ref": "#/components/schemas/Finding"
+            },
+            "title": "Findings",
+            "type": "array"
+          },
           "grader_set_hash": {
             "title": "Grader Set Hash",
             "type": "string"
@@ -362,6 +369,17 @@
             "format": "uuid",
             "title": "Id",
             "type": "string"
+          },
+          "primary_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Reason"
           },
           "snapshot_hash": {
             "anyOf": [
@@ -391,6 +409,8 @@
           "snapshot_hash",
           "verdict",
           "grades",
+          "primary_reason",
+          "findings",
           "evaluated_at"
         ],
         "title": "EvaluationRecord",
@@ -710,6 +730,37 @@
           "effect"
         ],
         "title": "FaultRule",
+        "type": "object"
+      },
+      "Finding": {
+        "additionalProperties": false,
+        "description": "One classified failure signal. A run keeps all of its findings; ``primary_reason`` is\nchosen from them by ``REASON_PRIORITY``.",
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Detail"
+          },
+          "source": {
+            "title": "Source",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "source"
+        ],
+        "title": "Finding",
         "type": "object"
       },
       "Grade": {

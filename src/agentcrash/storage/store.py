@@ -12,7 +12,7 @@ from sqlalchemy import Connection, Engine, func, select, text, tuple_, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import ProgrammingError
 
-from agentcrash.domain.evidence import Grade
+from agentcrash.domain.evidence import Finding, Grade
 from agentcrash.domain.models import CompiledScenario, Manifest, RunCreate, Scenario, ScenarioRef
 from agentcrash.domain.pagination import InvalidCursor, decode_cursor, encode_cursor
 from agentcrash.domain.ports import (
@@ -371,6 +371,8 @@ class PostgresStore:
                 snapshot_hash=row.snapshot_hash,
                 verdict=row.verdict,
                 grades=[Grade.model_validate(g) for g in row.grades],
+                primary_reason=row.primary_reason,
+                findings=[Finding.model_validate(f) for f in row.findings],
                 evaluated_at=row.evaluated_at,
             )
             for row in rows

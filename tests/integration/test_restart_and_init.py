@@ -22,7 +22,7 @@ from agentcrash.settings import Settings
 from .helpers import ROOT
 
 TOKEN = "r" * 43
-N_SCENARIOS = len(list((ROOT / "scenarios" / "invoice" / "v1").glob("*.yaml")))
+N_SCENARIOS = len(list((ROOT / "scenarios" / "invoice" / "v1").rglob("*.yaml")))
 SCENARIO_YAML = (ROOT / "scenarios" / "invoice" / "v1" / "invoice-429.yaml").read_bytes()
 RUN = {
     "schema_version": "1.0",

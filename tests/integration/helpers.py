@@ -63,9 +63,8 @@ def submit_run(
 ) -> UUID:
     """Accept a run through the same domain path the API uses (no HTTP), return its id."""
     registry = default_registry(ROOT)
-    doc = load_scenario_document(
-        (ROOT / "scenarios" / "invoice" / "v1" / f"{scenario}.yaml").read_bytes()
-    )
+    (path,) = (ROOT / "scenarios" / "invoice" / "v1").rglob(f"{scenario}.yaml")
+    doc = load_scenario_document(path.read_bytes())
     compiled = compile_scenario(doc, registry)
     store.put_scenario(compiled)
     for spec in registry.agents.values():

@@ -146,6 +146,16 @@ class StoredCall:
 
 
 @dataclass(frozen=True)
+class RecentCall:
+    """What loop detection needs from an earlier call: identity of the request and a coarse
+    outcome (HTTP status as text, or ``transport`` for a simulated timeout)."""
+
+    tool: str
+    input_hash: str
+    signature: str
+
+
+@dataclass(frozen=True)
 class AttemptCounters:
     calls: int
     steps: int
@@ -163,6 +173,10 @@ class AttemptTx(Protocol):
     def cancel_requested(self) -> bool: ...
     def counters(self) -> AttemptCounters: ...
     def get_call(self, call_id: str) -> StoredCall | None: ...
+    def recent_calls(self, limit: int) -> list[RecentCall]:
+        """The last ``limit`` recorded calls, newest first."""
+        ...
+
     def record_call(
         self,
         call_id: str,

@@ -15,6 +15,8 @@ from agentcrash.domain.runtime import StoredCall
 GradeResult = Literal["pass", "fail", "unknown"]
 
 # Primary reason priority (ENGINEERING_PLAN.md section 6): integrity, safety, task, resource.
+# Within "task", a specific cause (a wrong state, an unhandled schema change, exhausted retries,
+# a loop) outranks the generic TASK_INCOMPLETE it explains (decision D-034).
 REASON_PRIORITY = (
     "TRACE_INCOMPLETE",
     "EVALUATOR_ERROR",
@@ -23,6 +25,9 @@ REASON_PRIORITY = (
     "DUPLICATE_WRITE",
     "STALE_SOURCE",
     "WRONG_STATE",
+    "SCHEMA_UNHANDLED",
+    "RETRY_EXHAUSTED",
+    "LOOP_SUSPECTED",
     "TASK_INCOMPLETE",
     "BUDGET_EXCEEDED",
 )
@@ -60,6 +65,15 @@ class Grade(Strict):
     expected: Any = None
     evidence: list[EvidenceRef] = []
     duration_ms: int = 0
+
+
+class Finding(Strict):
+    """One classified failure signal. A run keeps all of its findings; ``primary_reason`` is
+    chosen from them by ``REASON_PRIORITY``."""
+
+    code: str
+    source: str  # a grader id, or "events" for signals read straight from the trace
+    detail: str | None = None
 
 
 def verdict_of(

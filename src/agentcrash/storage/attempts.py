@@ -17,13 +17,14 @@ from sqlalchemy.exc import ProgrammingError
 
 from agentcrash.domain.canonical import canonical_hash
 from agentcrash.domain.events import GENESIS, PendingEvent, StoredEvent, next_hash, project
-from agentcrash.domain.evidence import Evidence, Grade
+from agentcrash.domain.evidence import Evidence, Finding, Grade
 from agentcrash.domain.models import Budgets, Manifest
 from agentcrash.domain.runtime import (
     AttemptCounters,
     AttemptTx,
     EntityRow,
     EnvState,
+    RecentCall,
     StoredCall,
     StoredReceipt,
 )
@@ -210,6 +211,19 @@ class PgAttemptTx:
         return StoredCall(
             row.call_id, row.call_index, row.tool_ordinal, row.input_hash, row.outcome
         )
+
+    def recent_calls(self, limit: int) -> list[RecentCall]:
+        tc = t.tool_calls
+        rows = self._c.execute(
+            select(tc.c.tool, tc.c.input_hash, tc.c.outcome)
+            .where(tc.c.attempt_id == self._a)
+            .order_by(tc.c.call_index.desc())
+            .limit(limit)
+        )
+        return [
+            RecentCall(r.tool, r.input_hash, str(r.outcome.get("status", "transport")))
+            for r in rows
+        ]
 
     def record_call(
         self,
@@ -477,6 +491,8 @@ class AttemptRepo:
         verdict: str,
         grades: list[Grade],
         job_id: UUID,
+        primary_reason: str | None = None,
+        findings: list[Finding] | None = None,
     ) -> None:
         """Publish the evaluation exactly once per ``(attempt, grader set)`` and finish the run.
         A duplicate delivery inserts nothing and changes nothing."""
@@ -492,6 +508,8 @@ class AttemptRepo:
                     snapshot_hash=snapshot_hash,
                     verdict=verdict,
                     grades=[g.model_dump(mode="json") for g in grades],
+                    primary_reason=primary_reason,
+                    findings=[f.model_dump(mode="json") for f in findings or []],
                 )
                 .on_conflict_do_nothing(index_elements=["attempt_id", "grader_set_hash"])
                 .returning(t.evaluations.c.id)

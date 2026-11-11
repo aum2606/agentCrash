@@ -24,7 +24,7 @@ def test_empty_database_migrates_to_head(engine: Engine) -> None:
     tables = set(inspect(engine).get_table_names())
     assert tables >= EXPECTED_TABLES
     with engine.connect() as conn:
-        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0002"
+        assert conn.execute(text("SELECT version_num FROM alembic_version")).scalar() == "0003"
 
 
 def test_migration_matches_table_definitions(engine: Engine) -> None:
