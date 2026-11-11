@@ -1,0 +1,9 @@
+{
+  "stale_snapshots": {
+    "po-stale-v1": {
+      "tool": "purchase_order.get",
+      "data": {"id": "PO-2001", "vendor_id": "V-3001", "approved_amount_minor": 9000, "currency": "USD", "version": 1, "updated_at": "2025-12-31T00:00:00Z"},
+      "provenance": {"snapshot": "cached", "version": 1}
+    }
+  }
+}

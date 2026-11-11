@@ -22,6 +22,7 @@ from agentcrash.domain.models import (
     FaultRule,
     HttpError,
     SchemaMutation,
+    StaleRead,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
 )
@@ -39,12 +40,19 @@ from agentcrash.domain.runtime import (
     ToolTimeout,
 )
 from agentcrash.environments.invoice import tools as invoice_tools
-from agentcrash.faults.matcher import decide
+from agentcrash.faults.matcher import RuleDecision, decide
 
 NOTE_LIMIT = 200
 # Effects this gateway applies; the supervisor refuses scenarios needing any other.
 IMPLEMENTED_EFFECTS = frozenset(
-    {"delay", "http_error", "timeout_before_commit", "timeout_after_commit", "schema_mutation"}
+    {
+        "delay",
+        "http_error",
+        "timeout_before_commit",
+        "timeout_after_commit",
+        "schema_mutation",
+        "stale_read",
+    }
 )
 
 
@@ -67,6 +75,7 @@ class AttemptPolicy:
     faults: tuple[FaultRule, ...] = ()
     seed: str = "0"
     scenario_hash: str = ""
+    fixtures: Mapping[str, Any] = field(default_factory=dict)  # trusted fault fixtures
 
 
 @dataclass
@@ -268,22 +277,11 @@ class Gateway:
                     "status": outcome.status,
                     "source_version": outcome.source_version,
                 }
-                for d in decisions:  # at most one payload mutation per call (matcher-enforced)
-                    if d.applied and isinstance(d.rule.effect, SchemaMutation):
-                        eff = d.rule.effect
-                        note: dict[str, Any] = {
-                            "rule_id": d.rule.id,
-                            "operation": eff.operation,
-                            "pointer": eff.pointer,
-                            "applied": False,
-                        }
-                        if outcome.status != 200:  # only a successful body has the mutable shape
-                            note["reason"] = "non_success_status"
-                        else:
-                            completed["original_body_ref"] = f"sha256:{canonical_hash(body)}"
-                            body = mutate(body, eff.pointer, eff.operation, eff.new_key)
-                            note["applied"] = True
-                        completed["mutation"] = note
+                body, source_version, extra = self._rewrite(
+                    decisions, outcome.status, body, outcome.source_version
+                )
+                completed.update(extra)
+                completed["source_version"] = source_version
                 completed["body_ref"] = f"sha256:{canonical_hash(body)}"
                 self._event(tx, "tool.completed", now, completed, request.call_id, request.actor_id)
                 response = ToolResponse(
@@ -293,7 +291,7 @@ class Gateway:
                         call_index=call_index,
                         tool_ordinal=ordinal,
                         logical_time_ms=now,
-                        source_version=outcome.source_version,
+                        source_version=source_version,
                     ),
                 )
                 tx.record_call(
@@ -303,6 +301,45 @@ class Gateway:
         if timeout is not None:  # raised after commit so the evidence and any write persist
             raise timeout
         return response
+
+    def _rewrite(
+        self,
+        decisions: list[RuleDecision],
+        status: int,
+        body: dict[str, Any],
+        source_version: int | None,
+    ) -> tuple[dict[str, Any], int | None, dict[str, Any]]:
+        """Apply the (at most one, matcher-enforced) payload-rewriting effect to a 200 body.
+        Returns the new body, source version and the extra ``tool.completed`` evidence: the hash
+        of the original body and a record of what was done (or why nothing was)."""
+        extra: dict[str, Any] = {}
+        for d in decisions:
+            eff = d.rule.effect
+            if not (d.applied and eff.mutates_payload):
+                continue
+            note: dict[str, Any] = {"rule_id": d.rule.id, "effect": eff.type, "applied": False}
+            if isinstance(eff, SchemaMutation):
+                key = "mutation"
+                note.update(operation=eff.operation, pointer=eff.pointer)
+            elif isinstance(eff, StaleRead):
+                key = "replacement"
+                note["fixture_id"] = eff.snapshot_id
+            else:  # the supervisor refuses scenarios whose rewriting effect is not implemented
+                raise RuntimeError(f"unimplemented payload effect {eff.type}")
+            if status != 200:  # only a successful body has the shape these effects target
+                note["reason"] = "non_success_status"
+            else:
+                extra["original_body_ref"] = f"sha256:{canonical_hash(body)}"
+                if isinstance(eff, SchemaMutation):
+                    body = mutate(body, eff.pointer, eff.operation, eff.new_key)
+                else:
+                    snap = self.policy.fixtures["stale_snapshots"][eff.snapshot_id]
+                    note["fixture_hash"] = canonical_hash(snap)
+                    body = {**snap["data"], "provenance": snap["provenance"]}
+                    source_version = snap["data"]["version"]
+                note["applied"] = True
+            extra[key] = note
+        return body, source_version, extra
 
     def _advance(
         self, tx: AttemptTx, now: int, duration_ms: int, request: ToolRequest, cause: str

@@ -64,6 +64,7 @@ def open_gateway(
             faults=faults,
             seed=manifest.seed,
             scenario_hash=manifest.scenario_hash,
+            fixtures=bundle.faults,
         ),
         lambda: datetime.now(UTC),
         hooks or Hooks(),

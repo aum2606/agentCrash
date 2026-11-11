@@ -12,6 +12,7 @@ from agentcrash.domain.models import (
     FaultRule,
     HttpError,
     SchemaMutation,
+    StaleRead,
     TimeoutAfterCommit,
     TimeoutBeforeCommit,
 )
@@ -235,6 +236,7 @@ def test_schema_mutation_changes_only_the_response_body_and_records_both_hashes(
     first, second = completed_events(world)
     assert first["mutation"] == {
         "rule_id": "rename",
+        "effect": "schema_mutation",
         "operation": "rename",
         "pointer": "/approved_amount_minor",
         "applied": True,
@@ -256,3 +258,33 @@ def test_schema_mutation_on_an_error_response_is_recorded_as_not_applied(world: 
     assert event["mutation"]["applied"] is False
     assert event["mutation"]["reason"] == "non_success_status"
     assert "original_body_ref" not in event
+
+
+def test_stale_read_serves_the_older_snapshot_with_its_version_and_records_both_hashes(
+    world: World,
+) -> None:
+    r = rule("stale", "purchase_order.get", StaleRead(type="stale_read", snapshot_id="po-stale-v1"))
+    gateway, _ = open_gateway(world, faults=(r,))
+    stale = gateway.tool_call(req("c1", "purchase_order.get", PO))
+    assert stale.status == 200 and stale.body["version"] == 1
+    assert stale.body["approved_amount_minor"] == 9000
+    assert stale.body["updated_at"] == "2025-12-31T00:00:00Z" and stale.meta.source_version == 1
+    fresh = gateway.tool_call(req("c2", "purchase_order.get", {**PO, "force_refresh": True}))
+    assert fresh.body["version"] == 2 and fresh.body["approved_amount_minor"] == 10000
+    assert fresh.meta.source_version == 2
+    first, second = completed_events(world)
+    assert first["source_version"] == 1 and first["replacement"]["applied"] is True
+    assert (
+        first["replacement"]["fixture_id"] == "po-stale-v1" and first["replacement"]["fixture_hash"]
+    )
+    assert first["original_body_ref"] == second["body_ref"]  # the true current body
+    # The synthetic purchase order itself was never changed.
+    assert world.one("SELECT count(*) FROM events WHERE type = 'environment.mutated'") == 0
+
+
+def test_stale_read_does_not_replace_an_error_response(world: World) -> None:
+    r = rule("stale", "purchase_order.get", StaleRead(type="stale_read", snapshot_id="po-stale-v1"))
+    gateway, _ = open_gateway(world, faults=(r,))
+    assert gateway.tool_call(req("c1", "purchase_order.get", {"po_id": "PO-9999"})).status == 404
+    (event,) = completed_events(world)
+    assert event["replacement"]["applied"] is False and "original_body_ref" not in event

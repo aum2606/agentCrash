@@ -99,6 +99,7 @@ class AttemptSupervisor:
                 faults=tuple(manifest.scenario.faults),
                 seed=manifest.seed,
                 scenario_hash=manifest.scenario_hash,
+                fixtures=bundle.faults,
             ),
             self.wall_clock,
             self.hooks,

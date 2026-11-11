@@ -74,7 +74,18 @@ def default_registry(root: Path) -> Registry:
     )
     gf = _GraderFile.model_validate(_read_json(root / "graders" / "registry.json"))
     graders = {g.id: GraderSpec(g.id, g.version, g.always_required, g.params) for g in gf.graders}
-    return Registry(environments={(env.id, env.version): env}, graders=graders, agents=dict(AGENTS))
+    bundles = [load_bundle(root / rel) for rel in catalog.FIXTURE_FILES.values()]
+    snapshots = {
+        sid: snap["tool"]
+        for b in bundles
+        for sid, snap in b.faults.get("stale_snapshots", {}).items()
+    }
+    return Registry(
+        environments={(env.id, env.version): env},
+        graders=graders,
+        agents=dict(AGENTS),
+        stale_snapshots=snapshots,
+    )
 
 
 def alembic_head(root: Path) -> str:

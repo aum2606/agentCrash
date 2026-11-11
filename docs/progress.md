@@ -1,8 +1,8 @@
 # Progress ledger
 
-Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 2 done locally, not accepted** (slice 1 is commit `af3f4ba`; slice 2 is uncommitted; nothing pushed; CI has not run either).
+Last updated: 2026-11-11. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M3 in progress, slice 3 done locally, not accepted** (slices 1-2 are commits `af3f4ba`, `1cd6a80`; slice 3 is uncommitted; nothing pushed; CI has run none of them).
 
-## M3: fault engine and resilient agent (slices 1-2 of ~4; not accepted)
+## M3: fault engine and resilient agent (slices 1-3 of ~4; not accepted)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -29,14 +29,21 @@ Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed 
 - Final run this session: `agentcrash check` passed; 271 non-DB tests passed; integration **118 passed** (149 s).
 - **Unexplained intermittent integration failures (2 seen across about 15 full-file or full-suite runs; the first test never failed in 7 isolated runs):** `test_child_killed_after_the_write_commits_is_replaced_from_a_fresh_fixture` (M2; failed in two runs, message not captured) and `test_each_faulted_case_records_exactly_one_applied_decision[invoice-timeout-after]` (no `fault.decided` event, so the agent never reached the post). The second came from a run that took 1123 s instead of about 150 s, so the machine stalled and a real wall-clock limit (120 s attempt deadline, 30 s leases) plausibly fired; the first test kills only the Windows launcher process, which may race with an orphaned agent. Neither cause is proven. The assertion now reports the attempt's termination so the next occurrence is diagnosable. These tests rely on real wall-clock limits, which CLAUDE.md prefers to avoid; do not treat them as deterministic until this is resolved.
 
+**Slice 3: `stale_read`** (decision D-031):
+- `fixtures/invoice/v1/faults.json` holds the stale purchase-order snapshot `po-stale-v1` (version 1, 9000, one day old); the fixture loader hashes it (only when present), the registry derives `stale_snapshots` from it, and the supervisor hands it to the gateway.
+- The gateway's single rewrite step now serves the snapshot body and version for `stale_read` and records `replacement{...}` and `original_body_ref`; error bodies are untouched. The real purchase order is never modified.
+- New scenario `invoice-stale-po`. The naive agent posts 9000 from version 1: one wrong ledger entry, `fail`, failing exactly `invoice.correct_post.v1` and `invoice.fresh_source.v1` while duplicate, authorization and trace checks pass.
+- Tests added: 2 gateway tests (snapshot served, both hashes, error body untouched), the suite case and a test of which graders fail. Mutation checks (caught, restored): snapshot version not applied, body not substituted, error bodies replaced.
+- Final run: `agentcrash check` passed; 271 non-DB tests passed; integration 123 passed (195 s). The two intermittent failures noted under slice 2 did not recur in this run, and remain unexplained.
+
 **Not done / limits:**
-- Not implemented: `stale_read`, `document_injection`, `scripted_conflict` (each needs a repository-owned fixture); no fixture variants (stale PO snapshot, malicious document, conflict patch).
-- Missing suite cases: `stale-po`, `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
+- Not implemented: `document_injection`, `scripted_conflict` (each needs a repository-owned fixture); no malicious-document or conflict-patch fixtures.
+- Missing suite cases: `document-injection`, `cas-conflict`. The resilient agent, the intentionally vulnerable naive document parser, loop warning and failure classification do not exist, so "resilient passes all 10" and "naive designated failures match demo metadata" are unproven.
 - The naive agent does not catch `ToolTimeout`; it ends as `agent_error` through the child's generic handler rather than a deliberate "gave up".
 - The `recovery.observed` grader was exercised only through scenario compilation, not against a resilient run.
 - No Linux or CI run of this slice; nothing pushed or committed.
 
-**Smallest next task:** the stale PO snapshot fixture and `stale_read` (registry entry so the existing `UNKNOWN_REFERENCE` check passes, `invoice-stale-po` scenario), then the injection document and conflict patch fixtures, then the resilient agent.
+**Smallest next task:** the malicious-document fixture, `document_injection` and the intentionally vulnerable parser in the naive agent (`invoice-document-injection`), then the conflict patch and `scripted_conflict` (`invoice-cas-conflict`), then the resilient agent.
 
 ---
 

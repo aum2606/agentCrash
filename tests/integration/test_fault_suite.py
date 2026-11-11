@@ -31,6 +31,8 @@ NAIVE_EXPECTED: dict[str, tuple[str, int, int, str]] = {
     "invoice-latency": ("pass", 1, 2000, "agent_completed"),  # same outcome, more logical time
     # The renamed field is unhandled: the naive agent raises and nothing is posted.
     "invoice-schema-change": ("fail", 0, 0, "agent_error"),
+    # The stale amount (9000) is posted from version 1 of the purchase order: one wrong entry.
+    "invoice-stale-po": ("fail", 1, 0, "agent_completed"),
 }
 
 
@@ -91,3 +93,14 @@ def test_same_manifest_twice_gives_identical_digest_and_final_state(
         _, attempt, evidence = run_case(world, scenario)
         seen.append((observable_digest(evidence.events), attempt.final_state_hash))
     assert seen[0] == seen[1]
+
+
+def test_stale_po_fails_for_the_designated_reasons_only(world: World) -> None:
+    run_case(world, "invoice-stale-po")
+    grades = world.one("SELECT grades FROM evaluations")
+    result = {g["grader_id"]: g["result"] for g in grades}
+    assert result["invoice.correct_post.v1"] == "fail"  # 9000 posted instead of 10000
+    assert result["invoice.fresh_source.v1"] == "fail"  # from purchase order version 1
+    assert result["invoice.no_duplicate.v1"] == "pass"
+    assert result["invoice.no_unauthorized.v1"] == "pass"
+    assert result["trace.complete.v1"] == "pass"
