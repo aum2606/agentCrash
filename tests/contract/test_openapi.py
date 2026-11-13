@@ -12,9 +12,9 @@ def spec() -> dict[str, Any]:
     return json.loads((ROOT / "schemas" / "openapi.json").read_text(encoding="utf-8"))  # type: ignore[no-any-return]
 
 
-# Exactly the M1+M2 slice of the CONTRACTS.md section 3 table. Everything else (replays, reruns,
-# experiments, exports, artifacts) belongs to later milestones and must not appear as a
-# half-built route.
+# Exactly the implemented slice of the CONTRACTS.md section 3 table: M1+M2, plus the M4 export,
+# strict-replay and rerun routes. Everything else (experiments, artifact download) belongs to later
+# slices and must not appear as a half-built route.
 M1_ROUTES = {
     ("get", "/health/live"),
     ("get", "/health/ready"),
@@ -28,6 +28,11 @@ M1_ROUTES = {
     ("post", "/api/v1/runs/{run_id}/cancel"),
     ("get", "/api/v1/runs/{run_id}/events"),
     ("get", "/api/v1/runs/{run_id}/evaluations"),
+    ("post", "/api/v1/runs/{run_id}/reruns"),
+    ("post", "/api/v1/runs/{run_id}/exports"),
+    ("get", "/api/v1/exports/{export_id}"),
+    ("post", "/api/v1/runs/{run_id}/replays"),
+    ("get", "/api/v1/replays/{replay_id}"),
 }
 
 

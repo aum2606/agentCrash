@@ -1,4 +1,4 @@
-"""The worker loop: reap, claim an execution or grading job, repeat.
+"""The worker loop: reap, claim an execution, grading, export or replay job, repeat.
 
 Execution and grading use separate claim paths. Grading is idempotent by ``(attempt, grader
 set)``, so a duplicated or retried grading job publishes at most one evaluation.
@@ -14,6 +14,7 @@ from agentcrash.evaluation.classify import classify
 from agentcrash.evaluation.graders import evaluate
 from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.queue import JobQueue
+from agentcrash.workers.artifacts import ArtifactJobs
 from agentcrash.workers.supervisor import AttemptSupervisor
 
 log = logging.getLogger(__name__)
@@ -26,6 +27,7 @@ class Worker:
     supervisor: AttemptSupervisor
     owner: str
     poll_s: float = 0.5
+    artifacts: ArtifactJobs | None = None  # None: export/replay jobs stay queued
 
     def grade(self, claim: GradeClaim) -> str:
         manifest = self.repo.manifest(claim.run_id)
@@ -61,6 +63,14 @@ class Worker:
                 # Leave the lease to expire; the reaper re-queues it (bounded by delivery count).
                 log.exception("grading failed for attempt %s", graded.attempt_id)
             return True
+        if self.artifacts is not None:
+            for kind in ("export", "replay"):
+                subject = self.queue.claim_subject(kind, self.owner)
+                if subject is not None:
+                    log.info(
+                        "%s %s: %s", kind, subject.subject_id, self.artifacts.run(kind, subject)
+                    )
+                    return True
         return did
 
     def run_forever(self, stop: threading.Event) -> None:

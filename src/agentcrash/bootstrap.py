@@ -8,7 +8,7 @@ import platform
 import re
 import secrets
 import subprocess
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated
@@ -18,20 +18,23 @@ from alembic.script import ScriptDirectory
 from fastapi import FastAPI
 from pydantic import BaseModel, ConfigDict, Field
 
-from agentcrash.agents.registry import AGENTS
+from agentcrash.agents.registry import ADAPTERS, AGENTS
 from agentcrash.api.app import Services, create_app
 from agentcrash.domain.canonical import canonical_hash, sha256_hex
 from agentcrash.domain.models import GraderId, SourceInfo, ToolchainInfo
 from agentcrash.domain.registry import EnvironmentSpec, GraderSpec, Registry
 from agentcrash.environments.invoice import catalog
 from agentcrash.environments.invoice.fixture import load_bundle
+from agentcrash.replay.service import check_replayable
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_scenario_document
 from agentcrash.settings import Settings, load_settings
 from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.engine import make_engine
+from agentcrash.storage.exports import ExportRepo
 from agentcrash.storage.queue import JobQueue
 from agentcrash.storage.store import PostgresStore
+from agentcrash.workers.artifacts import ArtifactJobs
 from agentcrash.workers.loop import Worker
 from agentcrash.workers.supervisor import AttemptSupervisor
 
@@ -99,9 +102,60 @@ def alembic_head(root: Path) -> str:
     return head
 
 
-def make_provenance(root: Path) -> Callable[[], tuple[SourceInfo, ToolchainInfo]]:
+_MAX_UNTRACKED_FILES = 500
+_MAX_UNTRACKED_BYTES = 1 << 20
+_IMAGE_DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
+
+
+def _dirty_patch_hash(root: Path) -> str | None:
+    """Digest of the exact uncommitted state: the tracked diff against HEAD plus the path and
+    content hash of every untracked, non-ignored file. Only the digest is kept (never the patch,
+    which could hold secrets), so it identifies the state without reconstructing it. None when
+    the state cannot be hashed within the bounds (git failure, too many or too large files)."""
+
+    def git(*args: str) -> bytes | None:
+        try:
+            done = subprocess.run(  # noqa: S603
+                ["git", *args],  # noqa: S607
+                cwd=root,
+                capture_output=True,
+                timeout=20,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            return None
+        return done.stdout if done.returncode == 0 else None
+
+    diff = git("diff", "HEAD", "--binary")
+    listing = git("ls-files", "--others", "--exclude-standard", "-z")
+    if diff is None or listing is None:
+        return None
+    names = sorted(n for n in listing.decode("utf-8", "surrogateescape").split("\0") if n)
+    if len(names) > _MAX_UNTRACKED_FILES:
+        return None
+    untracked = []
+    for name in names:
+        path = root / name
+        try:
+            if path.is_symlink():
+                body = os.readlink(path).encode("utf-8", "surrogateescape")
+            elif path.is_file() and path.stat().st_size <= _MAX_UNTRACKED_BYTES:
+                body = path.read_bytes()
+            else:
+                return None
+        except OSError:
+            return None
+        untracked.append([name, sha256_hex(body)])
+    return canonical_hash({"diff": sha256_hex(diff), "untracked": untracked})
+
+
+def make_provenance(
+    root: Path, env: Mapping[str, str] | None = None
+) -> Callable[[], tuple[SourceInfo, ToolchainInfo]]:
     """Source/toolchain facts recorded in every manifest. A tree with uncommitted or untracked
-    files, or one where Git cannot be consulted, is reported dirty (not reproducible)."""
+    files, or one where Git cannot be consulted, is reported dirty and not reproducible. The
+    container image digest comes from ``AGENTCRASH_IMAGE_DIGEST`` (set by the image recipe) and is
+    omitted when absent or malformed."""
 
     def git(*args: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(  # noqa: S603
@@ -127,9 +181,21 @@ def make_provenance(root: Path) -> Callable[[], tuple[SourceInfo, ToolchainInfo]
             pass
         lock = root / "uv.lock"
         lock_hash = sha256_hex(lock.read_bytes()) if lock.is_file() else None
+        patch_hash = _dirty_patch_hash(root) if dirty and commit is not None else None
+        digest = (os.environ if env is None else env).get("AGENTCRASH_IMAGE_DIGEST", "")
         return (
-            SourceInfo(commit=commit, dirty=dirty),
-            ToolchainInfo(python=platform.python_version(), lock_hash=lock_hash),
+            SourceInfo(
+                commit=commit,
+                dirty=dirty,
+                patch_hash=patch_hash,
+                reproducible=commit is not None and not dirty,
+            ),
+            ToolchainInfo(
+                python=platform.python_version(),
+                lock_hash=lock_hash,
+                image_digest=digest if _IMAGE_DIGEST.fullmatch(digest) else None,
+                platform=f"{platform.system()}-{platform.machine()}"[:64],
+            ),
         )
 
     return provenance
@@ -156,6 +222,7 @@ def build_services(settings: Settings) -> Services:
         provenance=make_provenance(settings.root),
         queue_cap=settings.queue_cap,
         create_rate_per_minute=settings.create_rate_per_minute,
+        replay_check=lambda manifest: check_replayable(manifest, ADAPTERS),
     )
 
 
@@ -166,7 +233,8 @@ def build_worker(settings: Settings) -> Worker:
     queue = JobQueue(engine)
     repo = AttemptRepo(engine)
     supervisor = AttemptSupervisor(queue, repo, settings.root, owner, dict(catalog.TOOLS))
-    return Worker(queue, repo, supervisor, owner)
+    artifacts = ArtifactJobs(repo, ExportRepo(engine), settings.artifact_dir, ADAPTERS)
+    return Worker(queue, repo, supervisor, owner, artifacts=artifacts)
 
 
 def build_app() -> FastAPI:

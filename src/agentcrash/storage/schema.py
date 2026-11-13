@@ -290,3 +290,65 @@ evaluations = Table(
     UniqueConstraint("attempt_id", "grader_set_hash"),
     CheckConstraint(_in("verdict", VERDICTS), name="evaluations_verdict_check"),
 )
+
+
+# --- M4: artifacts, exports and replays (migration 0004) --------------------------------------
+
+JOB_SUBJECT_STATUSES = ("queued", "running", "completed", "error")
+
+# `subject_id` ties an export or replay job to the row it works for (jobs carry no payload).
+jobs.append_column(Column("subject_id", UUID(as_uuid=True)))
+
+artifacts = Table(
+    "artifacts",
+    metadata,
+    Column("hash", Text, primary_key=True),
+    Column("kind", Text, nullable=False),
+    Column("byte_size", BigInteger, nullable=False),
+    Column("relative_storage_key", Text, nullable=False),
+    _created(),
+    CheckConstraint("byte_size >= 0", name="artifacts_size_check"),
+)
+
+artifact_refs = Table(
+    "artifact_refs",
+    metadata,
+    Column("owner_type", Text, nullable=False),
+    Column("owner_id", UUID(as_uuid=True), nullable=False),
+    Column("hash", Text, ForeignKey("artifacts.hash"), nullable=False),
+    Column("pin_until", TIMESTAMP(timezone=True)),  # NULL: not pinned; 'infinity': pinned
+    PrimaryKeyConstraint("owner_type", "owner_id", "hash"),
+)
+Index("artifact_refs_hash_idx", artifact_refs.c.hash)
+
+exports = Table(
+    "exports",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("run_id", UUID(as_uuid=True), ForeignKey("runs.id"), nullable=False),
+    Column("attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("status", Text, nullable=False, server_default="queued"),
+    Column("pin", Boolean, nullable=False),
+    Column("artifact_hash", Text, ForeignKey("artifacts.hash")),
+    Column("error_code", Text),
+    _created(),
+    Column("closed_at", TIMESTAMP(timezone=True)),
+    CheckConstraint(_in("status", JOB_SUBJECT_STATUSES), name="exports_status_check"),
+)
+
+replays = Table(
+    "replays",
+    metadata,
+    Column("id", UUID(as_uuid=True), primary_key=True),
+    Column("run_id", UUID(as_uuid=True), ForeignKey("runs.id"), nullable=False),
+    Column("source_attempt_id", UUID(as_uuid=True), ForeignKey("run_attempts.id"), nullable=False),
+    Column("status", Text, nullable=False, server_default="queued"),
+    Column("adapter_hash", Text),
+    Column("consumed_events", Integer),
+    Column("total_events", Integer),
+    Column("divergence", JSONB),
+    Column("error_code", Text),
+    _created(),
+    Column("closed_at", TIMESTAMP(timezone=True)),
+    CheckConstraint(_in("status", JOB_SUBJECT_STATUSES), name="replays_status_check"),
+)

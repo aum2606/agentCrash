@@ -4,6 +4,7 @@ The API depends on ``Store`` only; the PostgreSQL implementation lives in ``stor
 wired in by the composition root. Methods are synchronous (decision D-019).
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Annotated, Any, Literal, Protocol
@@ -146,6 +147,64 @@ class CancelResult(Strict):
     accepted: bool  # False: the run was already terminal (HTTP 200 instead of 202)
 
 
+JobStatus = Literal["queued", "running", "completed", "error"]
+
+
+class ExportRecord(Strict):
+    """An export job. ``artifact_hash`` (the bundle's SHA-256) is set once it is completed."""
+
+    id: UUID
+    run_id: UUID
+    attempt_id: UUID
+    status: JobStatus
+    pin: bool
+    artifact_hash: Sha256 | None
+    error_code: str | None
+    created_at: datetime
+    closed_at: datetime | None
+
+
+class ReplayRecord(Strict):
+    """A strict replay job. ``completed`` with ``divergence`` null means the agent matched the
+    recording exactly; ``completed`` with a divergence reports the first difference; ``error``
+    means the replay could not run (``error_code`` says why)."""
+
+    id: UUID
+    run_id: UUID
+    attempt_id: UUID
+    mode: Literal["strict"] = "strict"
+    status: JobStatus
+    adapter_hash: Sha256 | None
+    consumed_events: int | None
+    total_events: int | None
+    divergence: dict[str, Any] | None
+    error_code: str | None
+    created_at: datetime
+    closed_at: datetime | None
+
+
+class CreateExportResult(Strict):
+    export: ExportRecord
+    replayed: bool
+
+
+class CreateReplayResult(Strict):
+    replay: ReplayRecord
+    replayed: bool
+
+
+class AttemptNotClosed(Exception):
+    """The attempt is still active; its evidence is not final."""
+
+
+class ReplayIncompatible(Exception):
+    """Strict replay is not possible for this run; ``reasons`` are stable codes."""
+
+    def __init__(self, reasons: list[str]) -> None:
+        super().__init__(", ".join(reasons))
+        self.reasons = reasons
+
+
 class AttemptNotInRun(Exception):
     """The requested attempt does not belong to the run."""
 
@@ -201,6 +260,16 @@ class GradeClaim:
 
 
 @dataclass(frozen=True)
+class SubjectClaim:
+    """A leased export or replay job and the export/replay row it works for."""
+
+    job_id: UUID
+    run_id: UUID
+    attempt_id: UUID
+    subject_id: UUID
+
+
+@dataclass(frozen=True)
 class Reaped:
     """One expired lease closed by the reaper. ``requeued`` False means attempts were exhausted
     and the run is now ``error`` (INFRA_WORKER_LOST)."""
@@ -239,8 +308,10 @@ class Store(Protocol):
         manifest: Manifest,
         manifest_hash: str,
         queue_cap: int,
+        parent_run_id: UUID | None = None,
     ) -> CreateRunResult: ...
     def get_run(self, run_id: UUID) -> RunRecord | None: ...
+    def get_run_create(self, run_id: UUID) -> RunCreate | None: ...
     def cancel_run(self, run_id: UUID, reason: str | None) -> CancelResult | None: ...
     def list_events(
         self, run_id: UUID, attempt_id: UUID | None, after_seq: int, limit: int
@@ -252,3 +323,28 @@ class Store(Protocol):
     def list_runs(
         self, status: str | None, scenario_id: str | None, cursor: str | None, limit: int
     ) -> RunPage: ...
+
+    def create_export(
+        self,
+        *,
+        principal: str,
+        route: str,
+        key: str,
+        request_hash: str,
+        run_id: UUID,
+        attempt_id: UUID,
+        pin: bool,
+    ) -> CreateExportResult | None: ...
+    def get_export(self, export_id: UUID) -> ExportRecord | None: ...
+    def create_replay(
+        self,
+        *,
+        principal: str,
+        route: str,
+        key: str,
+        request_hash: str,
+        run_id: UUID,
+        attempt_id: UUID,
+        check: Callable[[Manifest], list[str]],
+    ) -> CreateReplayResult | None: ...
+    def get_replay(self, replay_id: UUID) -> ReplayRecord | None: ...

@@ -10,7 +10,14 @@ from uuid import UUID, uuid4
 
 from sqlalchemy import Connection, Engine, func, select, update
 
-from agentcrash.domain.ports import WORKER_TERMINATIONS, Claim, GradeClaim, Reaped, StaleFence
+from agentcrash.domain.ports import (
+    WORKER_TERMINATIONS,
+    Claim,
+    GradeClaim,
+    Reaped,
+    StaleFence,
+    SubjectClaim,
+)
 from agentcrash.storage import schema as t
 
 LEASE_SECONDS = 30
@@ -239,7 +246,11 @@ class JobQueue:
         with self._engine.begin() as conn:
             conn.execute(
                 update(j)
-                .where(j.c.kind == "grade", j.c.status == "leased", j.c.lease_until < func.now())
+                .where(
+                    j.c.kind.in_(("grade", "export", "replay")),
+                    j.c.status == "leased",
+                    j.c.lease_until < func.now(),
+                )
                 .values(status="queued", owner=None, lease_until=None)
             )
             expired = conn.execute(
@@ -294,3 +305,44 @@ class JobQueue:
                 )
             )
         return GradeClaim(job.id, job.run_id, job.attempt_id)
+
+    def claim_subject(self, kind: str, owner: str) -> SubjectClaim | None:
+        """Lease the oldest export or replay job and mark its row ``running``. Both read an
+        immutable, closed attempt and never touch run state, so a redelivered job is harmless:
+        a job delivered ``MAX_GRADE_DELIVERIES`` times is failed visibly instead of retried."""
+        j = t.jobs
+        table = {"export": t.exports, "replay": t.replays}[kind]
+        with self._engine.begin() as conn:
+            job = conn.execute(
+                select(j.c.id, j.c.run_id, j.c.attempt_id, j.c.subject_id, j.c.delivery_count)
+                .where(j.c.kind == kind, j.c.status == "queued", j.c.available_at <= func.now())
+                .order_by(j.c.available_at, j.c.created_at, j.c.id)
+                .limit(1)
+                .with_for_update(skip_locked=True)
+            ).first()
+            if job is None:
+                return None
+            if job.delivery_count >= MAX_GRADE_DELIVERIES:
+                conn.execute(update(j).where(j.c.id == job.id).values(status="error"))
+                conn.execute(
+                    update(table)
+                    .where(table.c.id == job.subject_id, table.c.status != "completed")
+                    .values(status="error", error_code="JOB_FAILED", closed_at=func.now())
+                )
+                return None
+            conn.execute(
+                update(j)
+                .where(j.c.id == job.id)
+                .values(
+                    status="leased",
+                    owner=owner,
+                    delivery_count=j.c.delivery_count + 1,
+                    lease_until=func.now() + func.make_interval(0, 0, 0, 0, 0, 0, self._lease),
+                )
+            )
+            conn.execute(
+                update(table)
+                .where(table.c.id == job.subject_id, table.c.status == "queued")
+                .values(status="running")
+            )
+        return SubjectClaim(job.id, job.run_id, job.attempt_id, job.subject_id)

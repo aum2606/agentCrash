@@ -16,6 +16,7 @@ ALLOWED: dict[str, set[str]] = {
     "agents": {"domain"},
     "storage": {"domain"},
     "faults": {"domain"},
+    "replay": {"domain"},
     # The API sees persistence only through domain ports; bootstrap injects the implementation.
     "api": {"domain", "scenarios"},
 }

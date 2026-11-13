@@ -43,9 +43,13 @@ from agentcrash.domain.models import (
 )
 from agentcrash.domain.pagination import parse_limit
 from agentcrash.domain.ports import (
+    AttemptNotClosed,
     AttemptNotInRun,
     EvaluationList,
     EventPage,
+    ExportRecord,
+    ReplayIncompatible,
+    ReplayRecord,
     RunPage,
     RunRecord,
     ScenarioPage,
@@ -75,6 +79,9 @@ class Services:
     queue_cap: int = 100
     create_rate_per_minute: int = 10
     clock: Callable[[], float] = time.monotonic
+    # Strict-replay preconditions, injected by the composition root. The default refuses
+    # everything, so a Services built without it can never accept a replay.
+    replay_check: Callable[[Manifest], list[str]] = lambda manifest: ["REPLAY_CHECK_NOT_CONFIGURED"]
 
 
 class AgentInfo(BaseModel):
@@ -270,6 +277,30 @@ def create_app(services: Services) -> FastAPI:
             raise ApiError(404, "SCENARIO_NOT_FOUND", "No such scenario version.")
         return found
 
+    def _creation_key(request: Request) -> str:
+        """Rate-limit a creating request and return its validated Idempotency-Key."""
+        wait = limiter.check()
+        if wait is not None:
+            raise ApiError(
+                429,
+                "RATE_LIMITED",
+                "Too many creation requests; slow down.",
+                retryable=True,
+                headers={"Retry-After": str(int(wait) + 1)},
+            )
+        key = request.headers.get("idempotency-key")
+        if key is None:
+            raise ApiError(
+                400, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key header is required."
+            )
+        if not _IDEMPOTENCY_KEY.match(key):
+            raise ApiError(
+                400,
+                "IDEMPOTENCY_KEY_INVALID",
+                "Idempotency-Key must be 1-128 printable ASCII characters.",
+            )
+        return key
+
     @v1.post(
         "/runs",
         status_code=202,
@@ -296,26 +327,7 @@ def create_app(services: Services) -> FastAPI:
     def create_run(
         request: Request, response: Response, body: Annotated[bytes, Depends(read_body)]
     ) -> RunRecord:
-        idempotency_key = request.headers.get("idempotency-key")
-        wait = limiter.check()
-        if wait is not None:
-            raise ApiError(
-                429,
-                "RATE_LIMITED",
-                "Too many creation requests; slow down.",
-                retryable=True,
-                headers={"Retry-After": str(int(wait) + 1)},
-            )
-        if idempotency_key is None:
-            raise ApiError(
-                400, "IDEMPOTENCY_KEY_REQUIRED", "An Idempotency-Key header is required."
-            )
-        if not _IDEMPOTENCY_KEY.match(idempotency_key):
-            raise ApiError(
-                400,
-                "IDEMPOTENCY_KEY_INVALID",
-                "Idempotency-Key must be 1-128 printable ASCII characters.",
-            )
+        idempotency_key = _creation_key(request)
         run = validate_run_create(load_json_document(body, RunValidationError), services.registry)
         manifest = _manifest_for(run)
         result = services.store.create_run(
@@ -466,6 +478,216 @@ def create_app(services: Services) -> FastAPI:
         if items is None:
             raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
         return EvaluationList(items=items)
+
+    # --- exports and strict replays ------------------------------------------------------
+
+    def _job_body(
+        body: bytes, allowed: dict[str, type], fixed: dict[str, str] | None = None
+    ) -> tuple[UUID, dict[str, Any]]:
+        """Validate a small ``{attempt_id, ...}`` request body; returns the attempt and fields."""
+        doc = load_json_document(body, RunValidationError)
+        problems = [Diagnostic(f"/{k}", "UNKNOWN_FIELD") for k in sorted(set(doc) - set(allowed))]
+        if "attempt_id" not in doc:
+            problems.append(Diagnostic("/attempt_id", "MISSING_FIELD"))
+        for name, kind in allowed.items():
+            if name in doc and not isinstance(doc[name], kind):
+                problems.append(Diagnostic(f"/{name}", "INVALID_VALUE"))
+        for name, value in (fixed or {}).items():
+            if name not in doc:
+                problems.append(Diagnostic(f"/{name}", "MISSING_FIELD"))
+            elif doc[name] != value:
+                problems.append(Diagnostic(f"/{name}", "INVALID_VALUE"))
+        attempt = _uuid_param(
+            doc.get("attempt_id") if isinstance(doc.get("attempt_id"), str) else None, "attempt_id"
+        )
+        if problems or attempt is None:
+            raise RunValidationError(problems or [Diagnostic("/attempt_id", "INVALID_VALUE")])
+        return attempt, doc
+
+    def _creation_headers(response: Response, location: str, replayed: bool) -> None:
+        response.headers["Location"] = location
+        if replayed:
+            response.headers["Idempotent-Replayed"] = "true"
+
+    _KEY_DOCS = [
+        {
+            "name": "Idempotency-Key",
+            "in": "header",
+            "required": True,
+            "description": "1-128 printable ASCII characters.",
+            "schema": {"type": "string", "minLength": 1, "maxLength": 128},
+        }
+    ]
+
+    @v1.post(
+        "/runs/{run_id}/exports",
+        status_code=202,
+        response_model=ExportRecord,
+        responses=error_responses(400, 404, 409, 410, 413, 422, 429),
+        openapi_extra={"parameters": _KEY_DOCS},
+    )
+    def create_export(
+        run_id: str,
+        request: Request,
+        response: Response,
+        body: Annotated[bytes, Depends(read_body)],
+    ) -> ExportRecord:
+        """Body: ``{"attempt_id": uuid, "pin": bool (default true)}``. 409 while the attempt is
+        still active. When completed, ``artifact_hash`` is the bundle's SHA-256."""
+        key = _creation_key(request)
+        attempt, doc = _job_body(body, {"attempt_id": str, "pin": bool})
+        pin = bool(doc.get("pin", True))
+        run = _run_id(run_id)
+        route = "POST /api/v1/runs/{id}/exports"
+        try:
+            result = services.store.create_export(
+                principal=PRINCIPAL,
+                route=route,
+                key=key,
+                request_hash=canonical_hash(
+                    {"run_id": str(run), "attempt_id": str(attempt), "pin": pin}
+                ),
+                run_id=run,
+                attempt_id=attempt,
+                pin=pin,
+            )
+        except AttemptNotInRun:
+            raise RunValidationError([Diagnostic("/attempt_id", "ATTEMPT_NOT_IN_RUN")]) from None
+        except AttemptNotClosed:
+            raise ApiError(
+                409, "ATTEMPT_NOT_CLOSED", "The attempt is still active; export it once it closes."
+            ) from None
+        if result is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        _creation_headers(response, f"/api/v1/exports/{result.export.id}", result.replayed)
+        return result.export
+
+    @v1.get(
+        "/exports/{export_id}",
+        response_model=ExportRecord,
+        responses=error_responses(404, 422),
+    )
+    def get_export(export_id: str) -> ExportRecord:
+        found = services.store.get_export(_subject_id(export_id, "EXPORT_NOT_FOUND", "export"))
+        if found is None:
+            raise ApiError(404, "EXPORT_NOT_FOUND", "No such export.")
+        return found
+
+    @v1.post(
+        "/runs/{run_id}/replays",
+        status_code=202,
+        response_model=ReplayRecord,
+        responses=error_responses(400, 404, 409, 410, 413, 422, 429),
+        openapi_extra={"parameters": _KEY_DOCS},
+    )
+    def create_replay(
+        run_id: str,
+        request: Request,
+        response: Response,
+        body: Annotated[bytes, Depends(read_body)],
+    ) -> ReplayRecord:
+        """Body: ``{"mode": "strict", "attempt_id": uuid}``. 409 if the attempt is still active
+        or strict replay is not possible (``REPLAY_INCOMPATIBLE`` lists the reasons)."""
+        key = _creation_key(request)
+        attempt, _ = _job_body(body, {"attempt_id": str, "mode": str}, {"mode": "strict"})
+        run = _run_id(run_id)
+        try:
+            result = services.store.create_replay(
+                principal=PRINCIPAL,
+                route="POST /api/v1/runs/{id}/replays",
+                key=key,
+                request_hash=canonical_hash(
+                    {"run_id": str(run), "attempt_id": str(attempt), "mode": "strict"}
+                ),
+                run_id=run,
+                attempt_id=attempt,
+                check=services.replay_check,
+            )
+        except AttemptNotInRun:
+            raise RunValidationError([Diagnostic("/attempt_id", "ATTEMPT_NOT_IN_RUN")]) from None
+        except AttemptNotClosed:
+            raise ApiError(
+                409, "ATTEMPT_NOT_CLOSED", "The attempt is still active; replay it once it closes."
+            ) from None
+        except ReplayIncompatible as err:
+            raise ApiError(
+                409,
+                "REPLAY_INCOMPATIBLE",
+                "Strict replay is not possible for this run.",
+                details=[{"path": "/", "code": reason} for reason in err.reasons],
+            ) from None
+        if result is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        _creation_headers(response, f"/api/v1/replays/{result.replay.id}", result.replayed)
+        return result.replay
+
+    @v1.get(
+        "/replays/{replay_id}",
+        response_model=ReplayRecord,
+        responses=error_responses(404, 422),
+    )
+    def get_replay(replay_id: str) -> ReplayRecord:
+        found = services.store.get_replay(_subject_id(replay_id, "REPLAY_NOT_FOUND", "replay"))
+        if found is None:
+            raise ApiError(404, "REPLAY_NOT_FOUND", "No such replay.")
+        return found
+
+    def _subject_id(raw: str, code: str, noun: str) -> UUID:
+        try:
+            return UUID(raw)
+        except ValueError:
+            raise ApiError(404, code, f"No such {noun}.") from None
+
+    @v1.post(
+        "/runs/{run_id}/reruns",
+        status_code=202,
+        response_model=RunRecord,
+        responses=error_responses(400, 404, 409, 410, 413, 422, 429),
+        openapi_extra={"parameters": _KEY_DOCS},
+    )
+    def create_rerun(
+        run_id: str,
+        request: Request,
+        response: Response,
+        body: Annotated[bytes, Depends(read_body)],
+    ) -> RunRecord:
+        """A fresh, independent run from the parent's scenario, agent, budgets and labels,
+        optionally with a new ``seed``; the response links back through ``parent_run_id``. This is
+        a new execution, not a replay: the agent runs again against the tools."""
+        key = _creation_key(request)
+        parent = _run_id(run_id)
+        seed: Any = None
+        override = False
+        if body.strip():
+            doc = load_json_document(body, RunValidationError)
+            extra = [Diagnostic(f"/{k}", "UNKNOWN_FIELD") for k in sorted(set(doc) - {"seed"})]
+            if extra:
+                raise RunValidationError(extra)
+            override = "seed" in doc
+            seed = doc.get("seed")
+        base = services.store.get_run_create(parent)
+        if base is None:
+            raise ApiError(404, "RUN_NOT_FOUND", "No such run.")
+        document = base.model_dump(mode="json")
+        if override:
+            document["seed"] = seed
+        run = validate_run_create(document, services.registry)
+        manifest = _manifest_for(run)
+        result = services.store.create_run(
+            principal=PRINCIPAL,
+            route="POST /api/v1/runs/{id}/reruns",
+            key=key,
+            request_hash=canonical_hash({"parent_run_id": str(parent), "seed": seed}),
+            run=run,
+            manifest=manifest,
+            manifest_hash=manifest_hash(manifest),
+            queue_cap=services.queue_cap,
+            parent_run_id=parent,
+        )
+        response.headers["Location"] = f"/api/v1/runs/{result.run.id}"
+        if result.replayed:
+            response.headers["Idempotent-Replayed"] = "true"
+        return result.run
 
     app.include_router(v1)
 

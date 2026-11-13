@@ -21,6 +21,11 @@ class Settings:
     queue_cap: int = 100  # max queued runs (CONTRACTS section 3)
     create_rate_per_minute: int = 10
 
+    @property
+    def artifact_dir(self) -> Path:
+        """Content-addressed export bundles; under the git-ignored ``.local/``."""
+        return self.root / ".local" / "artifacts"
+
 
 def read_dotenv(path: Path) -> dict[str, str]:
     """Minimal KEY=VALUE reader (no quoting, no expansion); unknown shapes are skipped."""

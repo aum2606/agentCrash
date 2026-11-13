@@ -347,13 +347,35 @@ class ResolvedGrader(Strict):
 
 
 class SourceInfo(Strict):
+    """Where the code came from. ``reproducible`` is true only for a clean, committed tree: the
+    commit alone then identifies the program. A dirty tree is never reproducible here:
+    ``patch_hash`` identifies the exact uncommitted state (tracked diff plus untracked files) but
+    the patch itself is not stored, so it does not reconstruct the program. The last two fields
+    are optional so manifests recorded before M4 still load; for them ``reproducible`` is false."""
+
     commit: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{40}$")] | None
     dirty: bool
+    patch_hash: Sha256 | None = None
+    reproducible: bool = False
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "SourceInfo":
+        if self.reproducible and (self.commit is None or self.dirty):
+            raise PydanticCustomError(
+                "INCONSISTENT_PROVENANCE", "Only a clean committed tree can be reproducible"
+            )
+        if self.patch_hash is not None and not self.dirty:
+            raise PydanticCustomError(
+                "INCONSISTENT_PROVENANCE", "A patch hash only describes a dirty tree"
+            )
+        return self
 
 
 class ToolchainInfo(Strict):
     python: Annotated[str, StringConstraints(max_length=32)]
     lock_hash: Sha256 | None
+    image_digest: Annotated[str, StringConstraints(pattern=r"^sha256:[0-9a-f]{64}$")] | None = None
+    platform: Annotated[str, StringConstraints(max_length=64)] | None = None
 
 
 class RedactionInfo(Strict):

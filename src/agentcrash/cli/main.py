@@ -1,9 +1,10 @@
-"""CLI entry point: version, api, check, scenarios validate, dev init."""
+"""CLI entry point: version, api, check, scenarios validate, dev init, playback, replay."""
 
 import ipaddress
 import json
 import subprocess
 import sys
+from dataclasses import asdict
 from pathlib import Path
 from typing import Annotated
 
@@ -11,8 +12,14 @@ import typer
 import uvicorn
 
 from agentcrash import __version__
+from agentcrash.agents.registry import ADAPTERS
+from agentcrash.agents.rng import SeededRng
 from agentcrash.bootstrap import alembic_head, build_worker, default_registry, dev_init, read_token
 from agentcrash.domain.diagnostics import ValidationFailed
+from agentcrash.replay.bundle import Bundle, BundleError, read_bundle
+from agentcrash.replay.engine import NotReplayable
+from agentcrash.replay.playback import playback_report, render_text, sanitize
+from agentcrash.replay.service import Incompatible, replay_recorded
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_scenario_document
 from agentcrash.settings import load_settings
@@ -125,6 +132,82 @@ def scenarios_validate(
             for d in r.get("details", []):  # type: ignore[attr-defined]
                 typer.echo(f"        {d['path'] or '/'}: {d['code']}", err=True)
     if not all(r["valid"] for r in results):
+        raise typer.Exit(1)
+
+
+def _open_bundle(path: Path) -> Bundle:
+    """Offline and read-only: no settings, no database. Unsafe or damaged bundles exit 2."""
+    try:
+        return read_bundle(path)
+    except BundleError as err:
+        typer.echo(f"error: {err.code}: {sanitize(err.detail)}", err=True)
+        raise typer.Exit(2) from None
+
+
+@app.command()
+def playback(
+    bundle: Annotated[Path, typer.Option("--bundle", help="An exported .acbundle file.")],
+    json_output: Annotated[bool, typer.Option("--json", help="JSON report on stdout.")] = False,
+) -> None:
+    """Show a bundle's recorded evidence. Read-only; runs no agent and no tool."""
+    report = playback_report(_open_bundle(bundle))
+    if json_output:
+        typer.echo(json.dumps(report, indent=2))
+    else:
+        for line in render_text(report):
+            typer.echo(line)
+
+
+@app.command()
+def replay(
+    bundle: Annotated[Path, typer.Option("--bundle", help="An exported .acbundle file.")],
+    strict: Annotated[
+        bool, typer.Option("--strict", help="Strict recorded-response replay.")
+    ] = False,
+    json_output: Annotated[bool, typer.Option("--json", help="JSON result on stdout.")] = False,
+) -> None:
+    """Strictly replay a bundle with the installed adapter. Exit 0 the agent matched the
+    recording, 1 it diverged, 2 the bundle is unsafe or the replay is not possible."""
+    if not strict:
+        typer.echo("error: only --strict replay exists; reruns are a separate operation", err=True)
+        raise typer.Exit(2)
+    opened = _open_bundle(bundle)
+    try:
+        result = replay_recorded(
+            opened.manifest,
+            opened.events,
+            opened.calls,
+            ADAPTERS,
+            SeededRng,
+        )
+    except Incompatible as err:
+        typer.echo(f"error: REPLAY_INCOMPATIBLE: {', '.join(err.reasons)}", err=True)
+        raise typer.Exit(2) from None
+    except NotReplayable as err:
+        typer.echo(f"error: NOT_REPLAYABLE: {sanitize(str(err))}", err=True)
+        raise typer.Exit(2) from None
+    divergence = None if result.divergence is None else asdict(result.divergence)
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {
+                    "matched": result.ok,
+                    "consumed": result.consumed,
+                    "total": result.total,
+                    "divergence": divergence,
+                },
+                indent=2,
+            )
+        )
+    elif result.ok:
+        typer.echo(f"matched: {result.consumed}/{result.total} recorded items consumed")
+    else:
+        typer.echo(
+            f"REPLAY_DIVERGENCE at item {divergence['position']} ({divergence['kind']}): "  # type: ignore[index]
+            f"{sanitize(divergence['detail'])}; consumed {result.consumed}/{result.total}",  # type: ignore[index]
+            err=True,
+        )
+    if not result.ok:
         raise typer.Exit(1)
 
 

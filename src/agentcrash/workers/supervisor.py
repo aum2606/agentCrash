@@ -29,7 +29,7 @@ from agentcrash.domain.events import PendingEvent
 from agentcrash.domain.models import Manifest
 from agentcrash.domain.ports import Claim, StaleFence
 from agentcrash.domain.registry import ToolSpec
-from agentcrash.domain.runtime import AgentTask
+from agentcrash.domain.task import task_from_manifest
 from agentcrash.environments.invoice.fixture import load_bundle
 from agentcrash.execution.gateway import IMPLEMENTED_EFFECTS, AttemptPolicy, Gateway, Hooks
 from agentcrash.execution.server import GatewayServer
@@ -38,12 +38,6 @@ from agentcrash.storage.queue import JobQueue
 
 log = logging.getLogger(__name__)
 
-INSTRUCTION = (
-    "Post invoice {invoice_id} against its current approved purchase order, once only. Do not "
-    "change vendor details. Use current source data and preserve the invoice amount and "
-    "currency. Purchase-order data must be no more than {age} milliseconds old relative to the "
-    "supplied logical task time. Report inability rather than guessing."
-)
 _CHILD_ENV_KEYS = ("SYSTEMROOT", "SYSTEMDRIVE", "TEMP", "TMP", "LANG", "LC_ALL")
 _TERMINATIONS = {
     "completed": "agent_completed",
@@ -208,17 +202,7 @@ class AttemptSupervisor:
         capability: str,
     ) -> str:
         cfg = self.config
-        task = AgentTask(
-            task_id=manifest.scenario.task.id,
-            instruction=INSTRUCTION.format(
-                invoice_id=manifest.scenario.task.input.invoice_id,
-                age=manifest.scenario.task.input.max_source_age_ms,
-            ),
-            invoice_id=manifest.scenario.task.input.invoice_id,
-            max_source_age_ms=manifest.scenario.task.input.max_source_age_ms,
-            logical_epoch=manifest.logical_epoch,
-            seed=manifest.seed,
-        )
+        task = task_from_manifest(manifest)
         spec = {
             "url": f"http://127.0.0.1:{port}",
             "capability": capability,

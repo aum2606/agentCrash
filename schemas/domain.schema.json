@@ -1280,6 +1280,7 @@
         },
         "SourceInfo": {
           "additionalProperties": false,
+          "description": "Where the code came from. ``reproducible`` is true only for a clean, committed tree: the\ncommit alone then identifies the program. A dirty tree is never reproducible here:\n``patch_hash`` identifies the exact uncommitted state (tracked diff plus untracked files) but\nthe patch itself is not stored, so it does not reconstruct the program. The last two fields\nare optional so manifests recorded before M4 still load; for them ``reproducible`` is false.",
           "properties": {
             "commit": {
               "anyOf": [
@@ -1295,6 +1296,24 @@
             },
             "dirty": {
               "title": "Dirty",
+              "type": "boolean"
+            },
+            "patch_hash": {
+              "anyOf": [
+                {
+                  "pattern": "^[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Patch Hash"
+            },
+            "reproducible": {
+              "default": false,
+              "title": "Reproducible",
               "type": "boolean"
             }
           },
@@ -1423,6 +1442,19 @@
         "ToolchainInfo": {
           "additionalProperties": false,
           "properties": {
+            "image_digest": {
+              "anyOf": [
+                {
+                  "pattern": "^sha256:[0-9a-f]{64}$",
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Image Digest"
+            },
             "lock_hash": {
               "anyOf": [
                 {
@@ -1434,6 +1466,19 @@
                 }
               ],
               "title": "Lock Hash"
+            },
+            "platform": {
+              "anyOf": [
+                {
+                  "maxLength": 64,
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null,
+              "title": "Platform"
             },
             "python": {
               "maxLength": 32,

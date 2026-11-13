@@ -13,7 +13,14 @@ from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.exc import ProgrammingError
 
 from agentcrash.domain.evidence import Finding, Grade
-from agentcrash.domain.models import CompiledScenario, Manifest, RunCreate, Scenario, ScenarioRef
+from agentcrash.domain.models import (
+    AgentRef,
+    CompiledScenario,
+    Manifest,
+    RunCreate,
+    Scenario,
+    ScenarioRef,
+)
 from agentcrash.domain.pagination import InvalidCursor, decode_cursor, encode_cursor
 from agentcrash.domain.ports import (
     AgentIdentity,
@@ -36,6 +43,7 @@ from agentcrash.domain.ports import (
     StoredScenario,
 )
 from agentcrash.storage import schema as t
+from agentcrash.storage.exports import ExportStoreMixin
 
 # Serializes the "count queued, then insert" admission check across transactions.
 _ADMISSION_LOCK_KEY = 0x4143_4C5F_4144_4D31  # "ACL_ADM1"
@@ -51,7 +59,7 @@ def _summary(row: Any) -> ScenarioSummary:
     )
 
 
-class PostgresStore:
+class PostgresStore(ExportStoreMixin):
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
@@ -170,6 +178,7 @@ class PostgresStore:
         manifest: Manifest,
         manifest_hash: str,
         queue_cap: int,
+        parent_run_id: UUID | None = None,
     ) -> CreateRunResult:
         run_id = uuid4()
         with self._engine.begin() as conn:
@@ -224,6 +233,7 @@ class PostgresStore:
                     manifest=manifest.model_dump(mode="json"),
                     manifest_hash=manifest_hash,
                     labels=run.labels,
+                    parent_run_id=parent_run_id,
                 )
             )
             conn.execute(
@@ -232,6 +242,25 @@ class PostgresStore:
                 )
             )
             return CreateRunResult(run=self._load_runs(conn, [run_id])[0], replayed=False)
+
+    def get_run_create(self, run_id: UUID) -> RunCreate | None:
+        """The request that would reproduce this run's inputs (for a fresh rerun)."""
+        with self._engine.connect() as conn:
+            row = conn.execute(
+                select(t.runs.c.manifest, t.runs.c.labels).where(t.runs.c.id == run_id)
+            ).first()
+        if row is None:
+            return None
+        m = Manifest.model_validate(row.manifest)
+        return RunCreate(
+            schema_version="1.0",
+            scenario=ScenarioRef(id=m.scenario.id, version=m.scenario.version),
+            agent=AgentRef(id=m.agent.id, version=m.agent.version, config=m.agent.config),
+            seed=m.seed,
+            mode=m.mode,
+            budgets=m.budgets,
+            labels=row.labels,
+        )
 
     def get_run(self, run_id: UUID) -> RunRecord | None:
         with self._engine.connect() as conn:
