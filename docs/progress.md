@@ -1,8 +1,31 @@
 # Progress ledger
 
-Last updated: 2026-11-13. M0, M1 and M2 are **accepted** (CI green on `origin/main`, user-reported; M2 @ `821db83`; run URLs not seen). Current milestone: **M4 in progress (all four tasks implemented in slices 1 to 6, uncommitted); M3 implemented, verified locally and on Linux CI, acceptance awaits maintainer confirmation of D-034** (commits `af3f4ba` .. `95469d3`, merge `fbb812e`; CI green on `main` @ `fbb812e`).
+Last updated: 2026-11-13. M0, M1, M2, **M3 and M4 are accepted** (M3: CI green on Linux, PR run 43199886145 and `main` run 43200329507 @ `fbb812e`; M4: CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 in conversation on 2026-11-13). Current milestone: **M5 in progress (slice 1, uncommitted)**.
 
-## M4: replay, export and compatibility (slice 6; code complete locally, not accepted)
+## M5: experiments, reports and regression gate (slice 1 of ~4; not accepted)
+
+M4's acceptance evidence was verified first (CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 on 2026-11-13), and M3 and M4 were recorded as accepted. Decision D-041.
+
+**Slice 1: the pure core** (tasks 1 and 2 partly; nothing is stored or exposed yet):
+- `ExperimentCreate` (domain model, in the generated schema): scenarios x seeds x trials x 2 agents, at most 100 runs, exactly one trial per seed, `mock` mode, gate policy `mock-release.v1`; duplicate scenarios or seeds and oversized matrices are rejected with stable codes (`DUPLICATE_SCENARIO`, `DUPLICATE_SEED`, `MATRIX_TOO_LARGE`).
+- `experiments/matrix.py`: deterministic expansion into slots (scenario, seed, trial, baseline|candidate) and `incompatibilities(baseline, candidate)`, which lists everything besides the agent that must match (scenario hash, fixture, grader set and versions, seed, mode, epoch, budgets, canonicalization, fault-engine and taxonomy versions, redaction).
+- `experiments/report.py` and `domain/report.py`: `build_report` turns what is known per slot into a `ComparisonReport` (contract fields plus per-pair detail and `baseline_failures`) and evaluates the gate. Rates are exact integer ratios with a four-decimal string and a null value for an empty denominator (canonical encoding forbids floats); percentiles are nearest-rank with a small-sample warning; model requests, tokens and cost are explicitly null for mock runs.
+- Gate rules (D-041): incomparable pairs make the gate `incomplete`; otherwise any candidate failure, unsafe attempt or commit, duplicate write, stale source or incomplete trace is `fail` (even with other pairs missing); otherwise any missing, unfinished, errored, cancelled or inconclusive pair is `incomplete`; otherwise `pass`. Baseline failures never gate but are listed. Latency, steps and tool-call counts never enter the gate (tested by making them absurd).
+- Results: 39 unit tests in `tests/unit/test_experiments.py` (demo matrix expands to 20 runs; the 10-case demo passes with 3 designated baseline failures visible; missing, unfinished, evaluator-failed, cancelled and inconclusive runs can never pass; mismatched grader sets, versions and scenarios invalidate the comparison; every candidate safety finding fails the gate alone; exposure and recovery denominators; percentiles, ratios, determinism and canonical hashing). Mutation checks, each alone and restored: 25 run, 24 caught on the first pass; the survivor (`Pair.complete` never asserted) was fixed with a test and re-caught.
+- Verification run: `agentcrash check` passed (domain schema regenerated with `ExperimentCreate` and `ComparisonReport`); 420 non-DB tests passed, 1 skipped (symlink privilege on Windows). No PostgreSQL integration was needed or run for this slice.
+
+**Existing and not redone:** all seven graders already exist (trace, correct post, no duplicate, no unauthorized, fresh source, budget, recovery) and classification stores findings per evaluation (M3).
+
+**Not done (M5):**
+- `experiments` rows, `experiment_slots`, atomic creation of the matrix, runs and jobs (queue-cap check for the whole batch), `POST /experiments`, `GET /experiments/{id}`, `GET /experiments/{id}/report` (409 incomplete unless partial requested); reading slot results from PostgreSQL (fault applications from `fault.decided` events, logical and wall time, tool calls).
+- CLI run/wait/gate with exit codes 0 pass, 1 fail, 2 operational or incomplete; the 20-run demo end to end; a fabricated "success" message with a wrong ledger failing end to end (the graders exist; no end-to-end experiment test yet).
+- The reviewed deterministic baseline manifest and report (no machine-specific run IDs; the manifest hash includes source and toolchain facts, so the stored baseline must use stable per-slot identities instead).
+
+**Smallest next task:** migration 0005 (`experiment_slots`, `runs.experiment_id` use), atomic `create_experiment` in the store (idempotent, whole-batch queue-cap check, compatibility check of the two manifests per cell), and `POST /experiments` / `GET /experiments/{id}` with real PostgreSQL tests.
+
+---
+
+## M4: replay, export and compatibility (accepted 2026-11-13)
 
 M3's evidence was verified first: CI green on Linux (PR run 43199886145; `main` run 43200329507 @ `fbb812e`), local file-by-file integration runs, D-034 still awaiting maintainer confirmation (M3 not yet marked accepted). Decisions D-035 to D-040.
 
@@ -49,15 +72,17 @@ M3's evidence was verified first: CI green on Linux (PR run 43199886145; `main` 
 - Verification run: `agentcrash check` passed (domain schema regenerated); 380 non-DB tests passed, 1 skipped (symlink privilege); `test_replay` 41, `test_api_flow` 23, `test_reruns` 12, `test_schema` 7, `test_queue` 16 passed.
 - **Not done:** no Dockerfile or image recipe exists to set `AGENTCRASH_IMAGE_DIGEST` (IMPLEMENTATION puts the OCI image in the release milestone), so the field is empty in every run today; the manifest's `source` is not yet checked at release time (official reports need a clean tree, M7).
 
+**CI evidence (M4):** GitHub Actions run 43430236580 on push of `637fcb8` to `main`: `static`, `unit` (381 passed, including the symlink-path test skipped on Windows) and `postgres-integration` (230 passed in 120 s, one pytest run) all succeeded on ubuntu-24.04. This covers `test_execution`, `test_gateway` and `test_worker_process`, which were not run locally for slices 3 to 6. M4 accepted on this evidence plus the maintainer's confirmation of D-036 to D-040 (2026-11-13).
+
 **Not done (M4):**
 - `GET /artifacts/{sha256}` download, retention/sweep of unreferenced artifacts (pins are recorded, nothing reads them yet), import of a bundle into a database (offline opening is by CLI only; no import service exists).
-- Acceptance: the three replay/export acceptance items have evidence (see slice 4). M4 is **not** accepted: no image recipe supplies the image digest, the bundle format details (D-036) and table additions (D-037) await maintainer confirmation, no CI run covers these slices yet, and a golden committed bundle fixture does not exist.
+- Acceptance: all acceptance items in IMPLEMENTATION M4 have evidence (slices 1 to 4, CI above). **Accepted 2026-11-13.** Known gaps carried forward, not blocking: no image recipe supplies `image_digest` (release milestone), no committed golden bundle fixture, no retention sweep or artifact download, no import-into-database service (offline CLI is the read-only path).
 
-**Smallest next task:** push the M3 and M4 work for Linux CI (needs the maintainer to commit; I do not commit or push unasked), run `test_execution`, `test_gateway`, `test_worker_process` and the rest of the integration suite there, and ask the maintainer to review D-034 and D-036 to D-040. Then M4 acceptance can be decided and M5 (experiments, reports, regression gate) started.
+**Smallest next task:** maintainer review of D-034 and D-036 to D-040 (CI for M4 is green, see above). Then M4 acceptance can be decided and M5 (experiments, reports, regression gate) started.
 
 ---
 
-## M3: fault engine and resilient agent (slices 1-6; not accepted)
+## M3: fault engine and resilient agent (accepted 2026-11-13)
 
 Prior milestone: **M2 accepted 2026-11-11** on the user's report that CI passed for `821db83` (I could not see the run; `gh` is not installed here). Decisions D-028, D-029.
 
@@ -267,4 +292,4 @@ All M1 tasks from IMPLEMENTATION.md are implemented, except generating the typed
 
 ## Next action
 
-M4 is code complete locally. Next: commit and push for CI, then maintainer review of the open decisions, then M5. Still open: CODEOWNERS rules (needs maintainer handle), license (O-003), branch protection.
+Continue M5 with the smallest next task named in the M5 section (experiment storage and creation API). Still open: CODEOWNERS rules (needs maintainer handle), license (O-003), branch protection.

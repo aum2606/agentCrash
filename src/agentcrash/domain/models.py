@@ -326,6 +326,37 @@ class RunCreate(Strict):
     labels: Annotated[dict[str, str], AfterValidator(_labels)] = {}
 
 
+MAX_EXPERIMENT_RUNS = 100  # scenarios x seeds x trials x 2 agents (CONTRACTS section 4)
+
+
+class ExperimentCreate(Strict):
+    """A paired baseline/candidate comparison over an immutable matrix. Each expanded cell
+    ``(scenario, seed, trial)`` becomes one run per agent, so ``2 * cells`` runs in total."""
+
+    schema_version: Literal["1.0"]
+    name: Annotated[str, StringConstraints(min_length=1, max_length=128)]
+    scenario_refs: Annotated[list[ScenarioRef], Field(min_length=1, max_length=MAX_EXPERIMENT_RUNS)]
+    baseline_agent: AgentRef
+    candidate_agent: AgentRef
+    seeds: Annotated[list[Seed], Field(min_length=1, max_length=MAX_EXPERIMENT_RUNS)]
+    trials_per_seed: Literal[1]  # MVP: exactly one trial per seed
+    mode: Literal["mock"]
+    gate_policy_id: Literal["mock-release.v1"]
+
+    @model_validator(mode="after")
+    def _matrix(self) -> "ExperimentCreate":
+        if len({(r.id, r.version) for r in self.scenario_refs}) != len(self.scenario_refs):
+            raise PydanticCustomError("DUPLICATE_SCENARIO", "Each scenario may appear once")
+        if len(set(self.seeds)) != len(self.seeds):
+            raise PydanticCustomError("DUPLICATE_SEED", "Each seed may appear once")
+        runs = len(self.scenario_refs) * len(self.seeds) * self.trials_per_seed * 2
+        if runs > MAX_EXPERIMENT_RUNS:
+            raise PydanticCustomError(
+                "MATRIX_TOO_LARGE", f"{runs} runs exceed the limit of {MAX_EXPERIMENT_RUNS}"
+            )
+        return self
+
+
 class FixtureInfo(Strict):
     id: Id
     hash: Sha256
