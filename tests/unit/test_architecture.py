@@ -19,7 +19,7 @@ ALLOWED: dict[str, set[str]] = {
     "replay": {"domain"},
     "experiments": {"domain"},
     # The API sees persistence only through domain ports; bootstrap injects the implementation.
-    "api": {"domain", "scenarios"},
+    "api": {"domain", "scenarios", "experiments"},
 }
 
 

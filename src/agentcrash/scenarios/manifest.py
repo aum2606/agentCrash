@@ -10,6 +10,7 @@ from agentcrash.domain.models import (
     FAULT_ENGINE_VERSION,
     TAXONOMY_VERSION,
     CompiledScenario,
+    ExperimentCreate,
     FixtureInfo,
     Manifest,
     RedactionInfo,
@@ -40,6 +41,33 @@ def validate_run_create(document: Any, registry: Registry) -> RunCreate:
         ]
         raise RunValidationError(details) from None
     return run
+
+
+def validate_experiment_create(document: Any, registry: Registry) -> ExperimentCreate:
+    """Shape, matrix limits and the adapter allowlist for both agents."""
+    try:
+        experiment = ExperimentCreate.model_validate(document)
+    except ValidationError as exc:
+        raise RunValidationError(from_pydantic(exc)) from None
+    problems: list[Diagnostic] = []
+    for field, agent in (
+        ("baseline_agent", experiment.baseline_agent),
+        ("candidate_agent", experiment.candidate_agent),
+    ):
+        spec = registry.agents.get((agent.id, agent.version))
+        if spec is None:
+            problems.append(Diagnostic(f"/{field}/id", "UNKNOWN_ADAPTER"))
+            continue
+        try:
+            spec.config_model.model_validate(agent.config)
+        except ValidationError as exc:
+            problems += [
+                Diagnostic(f"/{field}/config" + d.path, d.code, d.message)
+                for d in from_pydantic(exc)
+            ]
+    if problems:
+        raise RunValidationError(problems)
+    return experiment
 
 
 def build_manifest(

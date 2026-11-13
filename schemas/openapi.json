@@ -619,6 +619,227 @@
         "title": "ExpectedDemo",
         "type": "object"
       },
+      "ExperimentCreate": {
+        "additionalProperties": false,
+        "description": "A paired baseline/candidate comparison over an immutable matrix. Each expanded cell\n``(scenario, seed, trial)`` becomes one run per agent, so ``2 * cells`` runs in total.",
+        "properties": {
+          "baseline_agent": {
+            "$ref": "#/components/schemas/AgentRef"
+          },
+          "candidate_agent": {
+            "$ref": "#/components/schemas/AgentRef"
+          },
+          "gate_policy_id": {
+            "const": "mock-release.v1",
+            "title": "Gate Policy Id",
+            "type": "string"
+          },
+          "mode": {
+            "const": "mock",
+            "title": "Mode",
+            "type": "string"
+          },
+          "name": {
+            "maxLength": 128,
+            "minLength": 1,
+            "title": "Name",
+            "type": "string"
+          },
+          "scenario_refs": {
+            "items": {
+              "$ref": "#/components/schemas/ScenarioRef"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Scenario Refs",
+            "type": "array"
+          },
+          "schema_version": {
+            "const": "1.0",
+            "title": "Schema Version",
+            "type": "string"
+          },
+          "seeds": {
+            "items": {
+              "type": "string"
+            },
+            "maxItems": 100,
+            "minItems": 1,
+            "title": "Seeds",
+            "type": "array"
+          },
+          "trials_per_seed": {
+            "const": 1,
+            "title": "Trials Per Seed",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "schema_version",
+          "name",
+          "scenario_refs",
+          "baseline_agent",
+          "candidate_agent",
+          "seeds",
+          "trials_per_seed",
+          "mode",
+          "gate_policy_id"
+        ],
+        "title": "ExperimentCreate",
+        "type": "object"
+      },
+      "ExperimentRecord": {
+        "additionalProperties": false,
+        "description": "Matrix progress. ``status`` is derived: ``running`` until every run is terminal, then\n``completed`` (``error`` if any run ended in error). The report (verdicts, gate) is a\nseparate resource.",
+        "properties": {
+          "config_hash": {
+            "pattern": "^[0-9a-f]{64}$",
+            "title": "Config Hash",
+            "type": "string"
+          },
+          "created_at": {
+            "format": "date-time",
+            "title": "Created At",
+            "type": "string"
+          },
+          "expected_runs": {
+            "title": "Expected Runs",
+            "type": "integer"
+          },
+          "gate_policy_id": {
+            "const": "mock-release.v1",
+            "title": "Gate Policy Id",
+            "type": "string"
+          },
+          "id": {
+            "format": "uuid",
+            "title": "Id",
+            "type": "string"
+          },
+          "name": {
+            "title": "Name",
+            "type": "string"
+          },
+          "progress": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/RoleProgress"
+            },
+            "propertyNames": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ]
+            },
+            "title": "Progress",
+            "type": "object"
+          },
+          "slots": {
+            "items": {
+              "$ref": "#/components/schemas/ExperimentSlot"
+            },
+            "title": "Slots",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "running",
+              "completed",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "gate_policy_id",
+          "config_hash",
+          "status",
+          "expected_runs",
+          "progress",
+          "slots",
+          "created_at"
+        ],
+        "title": "ExperimentRecord",
+        "type": "object"
+      },
+      "ExperimentSlot": {
+        "additionalProperties": false,
+        "properties": {
+          "role": {
+            "enum": [
+              "baseline",
+              "candidate"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "run_id": {
+            "format": "uuid",
+            "title": "Run Id",
+            "type": "string"
+          },
+          "scenario_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "scenario_version": {
+            "title": "Scenario Version",
+            "type": "integer"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "string"
+          },
+          "status": {
+            "enum": [
+              "queued",
+              "running",
+              "evaluating",
+              "completed",
+              "error"
+            ],
+            "title": "Status",
+            "type": "string"
+          },
+          "trial": {
+            "title": "Trial",
+            "type": "integer"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "inconclusive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "scenario_version",
+          "seed",
+          "trial",
+          "role",
+          "run_id",
+          "status",
+          "verdict"
+        ],
+        "title": "ExperimentSlot",
+        "type": "object"
+      },
       "ExportRecord": {
         "additionalProperties": false,
         "description": "An export job. ``artifact_hash`` (the bundle's SHA-256) is set once it is completed.",
@@ -1148,6 +1369,46 @@
           "closed_at"
         ],
         "title": "ReplayRecord",
+        "type": "object"
+      },
+      "RoleProgress": {
+        "additionalProperties": false,
+        "description": "Run counts for one agent role, by lifecycle status.",
+        "properties": {
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "error": {
+            "title": "Error",
+            "type": "integer"
+          },
+          "evaluating": {
+            "title": "Evaluating",
+            "type": "integer"
+          },
+          "queued": {
+            "title": "Queued",
+            "type": "integer"
+          },
+          "running": {
+            "title": "Running",
+            "type": "integer"
+          },
+          "total": {
+            "title": "Total",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "queued",
+          "running",
+          "evaluating",
+          "completed",
+          "error"
+        ],
+        "title": "RoleProgress",
         "type": "object"
       },
       "RunCreate": {
@@ -1832,6 +2093,187 @@
           }
         ],
         "summary": "List Agents"
+      }
+    },
+    "/api/v1/experiments": {
+      "post": {
+        "description": "Atomically creates the experiment, one run per agent for every scenario x seed, and\ntheir execute jobs. All scenarios and agents are resolved first; any problem rejects the\nwhole request. 429 when the matrix would not fit under the queue cap.",
+        "operationId": "create_experiment_api_v1_experiments_post",
+        "parameters": [
+          {
+            "description": "1-128 printable ASCII characters.",
+            "in": "header",
+            "name": "Idempotency-Key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ExperimentCreate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "410": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Create Experiment"
+      }
+    },
+    "/api/v1/experiments/{experiment_id}": {
+      "get": {
+        "operationId": "get_experiment_api_v1_experiments__experiment_id__get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExperimentRecord"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Experiment"
       }
     },
     "/api/v1/exports/{export_id}": {

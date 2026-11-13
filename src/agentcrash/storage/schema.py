@@ -352,3 +352,24 @@ replays = Table(
     Column("closed_at", TIMESTAMP(timezone=True)),
     CheckConstraint(_in("status", JOB_SUBJECT_STATUSES), name="replays_status_check"),
 )
+
+
+# --- M5: experiment matrix (migration 0005) ---------------------------------------------------
+
+AGENT_ROLES = ("baseline", "candidate")
+
+experiment_slots = Table(
+    "experiment_slots",
+    metadata,
+    Column("experiment_id", UUID(as_uuid=True), ForeignKey("experiments.id"), nullable=False),
+    Column("scenario_hash", Text, nullable=False),
+    Column("scenario_id", Text, nullable=False),
+    Column("scenario_version", Integer, nullable=False),
+    Column("seed", Numeric(20, 0), nullable=False),
+    Column("trial_index", Integer, nullable=False),
+    Column("agent_role", Text, nullable=False),
+    Column("run_id", UUID(as_uuid=True), ForeignKey("runs.id"), nullable=False, unique=True),
+    PrimaryKeyConstraint("experiment_id", "scenario_hash", "seed", "trial_index", "agent_role"),
+    CheckConstraint(_in("agent_role", AGENT_ROLES), name="experiment_slots_role_check"),
+    CheckConstraint("trial_index >= 1", name="experiment_slots_trial_check"),
+)

@@ -35,9 +35,11 @@ from agentcrash.domain.diagnostics import (
 )
 from agentcrash.domain.models import (
     CompiledScenario,
+    ExperimentCreate,
     Manifest,
     RunCreate,
     Scenario,
+    ScenarioRef,
     SourceInfo,
     ToolchainInfo,
 )
@@ -47,7 +49,9 @@ from agentcrash.domain.ports import (
     AttemptNotInRun,
     EvaluationList,
     EventPage,
+    ExperimentRecord,
     ExportRecord,
+    PlannedRun,
     ReplayIncompatible,
     ReplayRecord,
     RunPage,
@@ -58,9 +62,15 @@ from agentcrash.domain.ports import (
     StoredScenario,
 )
 from agentcrash.domain.registry import Registry
+from agentcrash.experiments.matrix import Cell, cells, expand, incompatibilities
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_json_document, load_scenario_document
-from agentcrash.scenarios.manifest import build_manifest, manifest_hash, validate_run_create
+from agentcrash.scenarios.manifest import (
+    build_manifest,
+    manifest_hash,
+    validate_experiment_create,
+    validate_run_create,
+)
 
 PRINCIPAL = "local"
 MAX_BODY_BYTES = 1 << 20  # 1 MiB (CONTRACTS.md section 1)
@@ -345,10 +355,10 @@ def create_app(services: Services) -> FastAPI:
             response.headers["Idempotent-Replayed"] = "true"
         return result.run
 
-    def _manifest_for(run: RunCreate) -> Manifest:
-        stored = services.store.get_scenario(run.scenario.id, run.scenario.version)
+    def _compiled_for(ref: ScenarioRef, path: str) -> CompiledScenario:
+        stored = services.store.get_scenario(ref.id, ref.version)
         if stored is None:
-            raise RunValidationError([Diagnostic("/scenario", "UNKNOWN_SCENARIO")])
+            raise RunValidationError([Diagnostic(path, "UNKNOWN_SCENARIO")])
         # Re-compiling the stored (already normalized) scenario against today's registry
         # catches fixture/grader drift: a run must never start from a stale resolution.
         try:
@@ -356,12 +366,13 @@ def create_app(services: Services) -> FastAPI:
                 stored.scenario.model_dump(mode="json"), services.registry
             )
         except ScenarioValidationError:
-            raise RunValidationError(
-                [Diagnostic("/scenario", "SCENARIO_NO_LONGER_VALID")]
-            ) from None
+            raise RunValidationError([Diagnostic(path, "SCENARIO_NO_LONGER_VALID")]) from None
         if compiled.content_hash != stored.content_hash:
-            raise RunValidationError([Diagnostic("/scenario", "SCENARIO_NO_LONGER_VALID")])
-        spec = services.registry.agents[(run.agent.id, run.agent.version)]
+            raise RunValidationError([Diagnostic(path, "SCENARIO_NO_LONGER_VALID")])
+        return compiled
+
+    def _ensure_agent(agent_id: str, version: str) -> None:
+        spec = services.registry.agents[(agent_id, version)]
         services.store.ensure_agent_version(
             spec.id,
             spec.version,
@@ -369,6 +380,10 @@ def create_app(services: Services) -> FastAPI:
             canonical_hash(spec.config_model.model_json_schema()),
             spec.source_hash,
         )
+
+    def _manifest_for(run: RunCreate) -> Manifest:
+        compiled = _compiled_for(run.scenario, "/scenario")
+        _ensure_agent(run.agent.id, run.agent.version)
         source, toolchain = services.provenance()
         return build_manifest(compiled, run, services.registry, source=source, toolchain=toolchain)
 
@@ -689,6 +704,96 @@ def create_app(services: Services) -> FastAPI:
             response.headers["Idempotent-Replayed"] = "true"
         return result.run
 
+    @v1.post(
+        "/experiments",
+        status_code=202,
+        response_model=ExperimentRecord,
+        responses=error_responses(400, 409, 410, 413, 422, 429),
+        openapi_extra={
+            "parameters": _KEY_DOCS,
+            "requestBody": {
+                "required": True,
+                "content": {
+                    "application/json": {
+                        "schema": {"$ref": "#/components/schemas/ExperimentCreate"}
+                    }
+                },
+            },
+        },
+    )
+    def create_experiment(
+        request: Request, response: Response, body: Annotated[bytes, Depends(read_body)]
+    ) -> ExperimentRecord:
+        """Atomically creates the experiment, one run per agent for every scenario x seed, and
+        their execute jobs. All scenarios and agents are resolved first; any problem rejects the
+        whole request. 429 when the matrix would not fit under the queue cap."""
+        key = _creation_key(request)
+        experiment = validate_experiment_create(
+            load_json_document(body, RunValidationError), services.registry
+        )
+        compiled = {}
+        for i, ref in enumerate(experiment.scenario_refs):
+            compiled[(ref.id, ref.version)] = _compiled_for(ref, f"/scenario_refs/{i}")
+        _ensure_agent(experiment.baseline_agent.id, experiment.baseline_agent.version)
+        _ensure_agent(experiment.candidate_agent.id, experiment.candidate_agent.version)
+        source, toolchain = services.provenance()  # one snapshot for the whole matrix
+        planned: list[PlannedRun] = []
+        built: dict[tuple[Cell, str], Manifest] = {}
+        for slot in expand(experiment):
+            agent = (
+                experiment.baseline_agent if slot.role == "baseline" else experiment.candidate_agent
+            )
+            run = RunCreate(
+                schema_version="1.0",
+                scenario=ScenarioRef(id=slot.cell.scenario_id, version=slot.cell.scenario_version),
+                agent=agent,
+                seed=slot.cell.seed,
+                mode="mock",
+            )
+            c = compiled[(slot.cell.scenario_id, slot.cell.scenario_version)]
+            manifest = build_manifest(c, run, services.registry, source=source, toolchain=toolchain)
+            built[(slot.cell, slot.role)] = manifest
+            planned.append(
+                PlannedRun(
+                    c.content_hash,
+                    slot.cell.trial,
+                    slot.role,
+                    run,
+                    manifest,
+                    manifest_hash(manifest),
+                )
+            )
+        for cell in cells(experiment):
+            problems = incompatibilities(built[(cell, "baseline")], built[(cell, "candidate")])
+            if problems:
+                raise RunValidationError(
+                    [Diagnostic("/candidate_agent", code) for code in problems]
+                )
+        result = services.store.create_experiment(
+            principal=PRINCIPAL,
+            route="POST /api/v1/experiments",
+            key=key,
+            request_hash=canonical_hash(experiment.model_dump(mode="json")),
+            config=experiment,
+            planned=planned,
+            queue_cap=services.queue_cap,
+        )
+        _creation_headers(response, f"/api/v1/experiments/{result.experiment.id}", result.replayed)
+        return result.experiment
+
+    @v1.get(
+        "/experiments/{experiment_id}",
+        response_model=ExperimentRecord,
+        responses=error_responses(404, 422),
+    )
+    def get_experiment(experiment_id: str) -> ExperimentRecord:
+        found = services.store.get_experiment(
+            _subject_id(experiment_id, "EXPERIMENT_NOT_FOUND", "experiment")
+        )
+        if found is None:
+            raise ApiError(404, "EXPERIMENT_NOT_FOUND", "No such experiment.")
+        return found
+
     app.include_router(v1)
 
     # --- OpenAPI: expose the raw-body request schemas under components -------------------
@@ -699,7 +804,7 @@ def create_app(services: Services) -> FastAPI:
                 title=app.title, version=app.version, routes=app.routes, summary=None
             )
             components = schema.setdefault("components", {}).setdefault("schemas", {})
-            for model in (Scenario, RunCreate):
+            for model in (Scenario, RunCreate, ExperimentCreate):
                 full = _schema_json(model)
                 components.update(full.pop("$defs", {}))
                 components[model.__name__] = full

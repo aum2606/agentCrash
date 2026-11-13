@@ -131,6 +131,12 @@ class StubStore:
     def get_replay(self, replay_id: UUID) -> Any:
         return self._unexpected("get_replay")
 
+    def create_experiment(self, **kwargs: Any) -> Any:
+        return self._unexpected("create_experiment")
+
+    def get_experiment(self, experiment_id: UUID) -> Any:
+        return self._unexpected("get_experiment")
+
 
 class FakeClock:
     def __init__(self) -> None:

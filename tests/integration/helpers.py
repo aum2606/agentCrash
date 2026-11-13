@@ -24,8 +24,8 @@ if TYPE_CHECKING:
 ROOT = Path(__file__).resolve().parents[2]
 DATA_TABLES = (
     "evaluations, ledger_entries, command_receipts, environment_rows, tool_calls, events,"
-    " api_idempotency, artifact_refs, exports, replays, artifacts, jobs, run_attempts, runs,"
-    " experiments, agent_versions, scenario_versions"
+    " api_idempotency, artifact_refs, exports, replays, artifacts, experiment_slots, jobs,"
+    " run_attempts, runs, experiments, agent_versions, scenario_versions"
 )
 
 

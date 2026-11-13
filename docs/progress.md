@@ -1,10 +1,10 @@
 # Progress ledger
 
-Last updated: 2026-11-13. M0, M1, M2, **M3 and M4 are accepted** (M3: CI green on Linux, PR run 43199886145 and `main` run 43200329507 @ `fbb812e`; M4: CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 in conversation on 2026-11-13). Current milestone: **M5 in progress (slice 1, uncommitted)**.
+Last updated: 2026-11-13. M0, M1, M2, **M3 and M4 are accepted** (M3: CI green on Linux, PR run 43199886145 and `main` run 43200329507 @ `fbb812e`; M4: CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 in conversation on 2026-11-13). Current milestone: **M5 in progress (slices 1 and 2; slice 1 committed as `16cb461`, slice 2 uncommitted)**.
 
-## M5: experiments, reports and regression gate (slice 1 of ~4; not accepted)
+## M5: experiments, reports and regression gate (slice 2 of ~4; not accepted)
 
-M4's acceptance evidence was verified first (CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 on 2026-11-13), and M3 and M4 were recorded as accepted. Decision D-041.
+M4's acceptance evidence was verified first (CI run 43430236580 @ `637fcb8` green; the maintainer confirmed D-034 and D-036..D-040 on 2026-11-13), and M3 and M4 were recorded as accepted. Decisions D-041 and D-042.
 
 **Slice 1: the pure core** (tasks 1 and 2 partly; nothing is stored or exposed yet):
 - `ExperimentCreate` (domain model, in the generated schema): scenarios x seeds x trials x 2 agents, at most 100 runs, exactly one trial per seed, `mock` mode, gate policy `mock-release.v1`; duplicate scenarios or seeds and oversized matrices are rejected with stable codes (`DUPLICATE_SCENARIO`, `DUPLICATE_SEED`, `MATRIX_TOO_LARGE`).
@@ -16,12 +16,18 @@ M4's acceptance evidence was verified first (CI run 43430236580 @ `637fcb8` gree
 
 **Existing and not redone:** all seven graders already exist (trace, correct post, no duplicate, no unauthorized, fresh source, budget, recovery) and classification stores findings per evaluation (M3).
 
+**Slice 2: experiment storage and creation API** (task 1 mostly):
+- Migration `0005` (additive): `experiment_slots` (experiment, scenario hash/id/version, seed, trial, role, unique run; immutable by trigger). `experiments.status` is stored as `created` and the served status is derived from the runs (`running` until all are terminal, then `completed`, or `error` if any run errored). Decision D-042.
+- `POST /api/v1/experiments` (`ExperimentCreate`, `Idempotency-Key`) resolves every scenario and both agents first, builds all manifests from **one** provenance snapshot, checks each cell's baseline/candidate pair for comparability, then in one transaction takes the admission lock, checks that the **whole batch** fits under the queue cap, and writes the experiment, every run with its execute job, and every slot. Any refusal (validation, incompatible pair, full queue) leaves no row and does not burn the idempotency key. Same key and body returns the same matrix; a changed body is 409. `GET /api/v1/experiments/{id}` serves matrix progress per role and each slot's run, status and verdict. Single-run admission now shares the same `admit`/`insert_run` code (`storage/admission.py`).
+- Results (real PostgreSQL, HTTP, worker): 11 tests in `tests/integration/test_experiments_api.py` passed: the demo creates 20 runs, 20 slots and 20 jobs with correct roles and one source snapshot; idempotent replay and conflict; cap 19 refuses with nothing written and cap 20 accepts with the same key; already-queued runs count (3 + 20 > 22); two matrices racing for one slot in the queue (barrier, cap 25) give exactly one 202 and one 429; ten kinds of invalid request create nothing with the right paths (`/scenario_refs/1`, `/baseline_agent/id`, ...); an incomparable pair is refused; slot updates and deletes are rejected; several seeds; derived status in partial, all-complete and one-errored states; and the demo run to completion by a worker (candidate passes all 10, the weak baseline passes some and fails some). Mutation checks, each alone and restored, all 10 caught on the first pass except the derived-status rule, which survived until the status test was added and is now caught.
+- Verification run: `agentcrash check` passed (OpenAPI regenerated, `ExperimentCreate` exposed under components); 420 non-DB tests passed, 1 skipped (symlink privilege); `test_schema` 7, `test_queue` 16, `test_api_flow` 23, `test_reruns` 12, `test_exports_api` 15 passed (the last two files exercise the refactored run creation).
+
 **Not done (M5):**
-- `experiments` rows, `experiment_slots`, atomic creation of the matrix, runs and jobs (queue-cap check for the whole batch), `POST /experiments`, `GET /experiments/{id}`, `GET /experiments/{id}/report` (409 incomplete unless partial requested); reading slot results from PostgreSQL (fault applications from `fault.decided` events, logical and wall time, tool calls).
+- `GET /experiments/{id}/report` (409 incomplete unless partial requested) and reading slot results from PostgreSQL into `SlotRun` (fault applications from `fault.decided` events, logical and wall time, tool calls, finding codes, recovery grade). `GET /experiments/{id}` does not yet include the aggregate that CONTRACTS mentions; the report endpoint will carry it.
 - CLI run/wait/gate with exit codes 0 pass, 1 fail, 2 operational or incomplete; the 20-run demo end to end; a fabricated "success" message with a wrong ledger failing end to end (the graders exist; no end-to-end experiment test yet).
 - The reviewed deterministic baseline manifest and report (no machine-specific run IDs; the manifest hash includes source and toolchain facts, so the stored baseline must use stable per-slot identities instead).
 
-**Smallest next task:** migration 0005 (`experiment_slots`, `runs.experiment_id` use), atomic `create_experiment` in the store (idempotent, whole-batch queue-cap check, compatibility check of the two manifests per cell), and `POST /experiments` / `GET /experiments/{id}` with real PostgreSQL tests.
+**Smallest next task:** the storage reader that turns an experiment's runs into `SlotRun` values (verdict, primary reason, finding codes, recovery grade, fault applications, tool calls, steps, logical and wall time), `GET /experiments/{id}/report` (409 while incomplete unless `partial=true`), and PostgreSQL tests that build the report from the real 20-run demo, including a run cancelled mid-way and a run whose evaluator failed.
 
 ---
 

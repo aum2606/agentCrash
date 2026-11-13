@@ -34,7 +34,6 @@ from agentcrash.domain.ports import (
     IdempotencyConflict,
     IdempotencyExpired,
     PutScenarioResult,
-    QueueFull,
     RunPage,
     RunRecord,
     ScenarioConflict,
@@ -43,10 +42,9 @@ from agentcrash.domain.ports import (
     StoredScenario,
 )
 from agentcrash.storage import schema as t
+from agentcrash.storage.admission import admit, insert_run
+from agentcrash.storage.experiments import ExperimentStoreMixin
 from agentcrash.storage.exports import ExportStoreMixin
-
-# Serializes the "count queued, then insert" admission check across transactions.
-_ADMISSION_LOCK_KEY = 0x4143_4C5F_4144_4D31  # "ACL_ADM1"
 
 
 def _summary(row: Any) -> ScenarioSummary:
@@ -59,7 +57,7 @@ def _summary(row: Any) -> ScenarioSummary:
     )
 
 
-class PostgresStore(ExportStoreMixin):
+class PostgresStore(ExportStoreMixin, ExperimentStoreMixin):
     def __init__(self, engine: Engine) -> None:
         self._engine = engine
 
@@ -214,33 +212,10 @@ class PostgresStore(ExportStoreMixin):
 
             # 2. Admission: count and insert under one lock so the cap cannot be overshot.
             #    Rolling back here also removes the idempotency claim, so a retry is fresh.
-            conn.execute(text("SELECT pg_advisory_xact_lock(:k)"), {"k": _ADMISSION_LOCK_KEY})
-            queued = conn.execute(
-                select(func.count()).select_from(t.runs).where(t.runs.c.status == "queued")
-            ).scalar_one()
-            if queued >= queue_cap:
-                raise QueueFull
+            admit(conn, 1, queue_cap)
 
             # 3. Run + job in the same transaction as the idempotency record.
-            conn.execute(
-                t.runs.insert().values(
-                    id=run_id,
-                    scenario_id=run.scenario.id,
-                    scenario_version=run.scenario.version,
-                    agent_id=run.agent.id,
-                    agent_version=run.agent.version,
-                    seed=int(run.seed),
-                    manifest=manifest.model_dump(mode="json"),
-                    manifest_hash=manifest_hash,
-                    labels=run.labels,
-                    parent_run_id=parent_run_id,
-                )
-            )
-            conn.execute(
-                t.jobs.insert().values(
-                    id=uuid4(), kind="execute", run_id=run_id, dedupe_key=f"execute:{run_id}"
-                )
-            )
+            insert_run(conn, run_id, run, manifest, manifest_hash, parent_run_id)
             return CreateRunResult(run=self._load_runs(conn, [run_id])[0], replayed=False)
 
     def get_run_create(self, run_id: UUID) -> RunCreate | None:

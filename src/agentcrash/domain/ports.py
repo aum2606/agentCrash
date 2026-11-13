@@ -15,6 +15,7 @@ from pydantic import Field
 from agentcrash.domain.evidence import Finding, Grade
 from agentcrash.domain.models import (
     CompiledScenario,
+    ExperimentCreate,
     Id,
     Manifest,
     RunCreate,
@@ -193,6 +194,61 @@ class CreateReplayResult(Strict):
     replayed: bool
 
 
+class RoleProgress(Strict):
+    """Run counts for one agent role, by lifecycle status."""
+
+    total: int
+    queued: int
+    running: int
+    evaluating: int
+    completed: int
+    error: int
+
+
+class ExperimentSlot(Strict):
+    scenario_id: Id
+    scenario_version: int
+    seed: str
+    trial: int
+    role: Literal["baseline", "candidate"]
+    run_id: UUID
+    status: RunStatus
+    verdict: Verdict | None
+
+
+class ExperimentRecord(Strict):
+    """Matrix progress. ``status`` is derived: ``running`` until every run is terminal, then
+    ``completed`` (``error`` if any run ended in error). The report (verdicts, gate) is a
+    separate resource."""
+
+    id: UUID
+    name: str
+    gate_policy_id: Literal["mock-release.v1"]
+    config_hash: Sha256
+    status: Literal["running", "completed", "error"]
+    expected_runs: int
+    progress: dict[Literal["baseline", "candidate"], RoleProgress]
+    slots: list[ExperimentSlot]
+    created_at: datetime
+
+
+class CreateExperimentResult(Strict):
+    experiment: ExperimentRecord
+    replayed: bool
+
+
+@dataclass(frozen=True)
+class PlannedRun:
+    """One slot, fully resolved by the API before anything is written."""
+
+    scenario_hash: str
+    trial: int
+    role: Literal["baseline", "candidate"]
+    run: RunCreate
+    manifest: Manifest
+    manifest_hash: str
+
+
 class AttemptNotClosed(Exception):
     """The attempt is still active; its evidence is not final."""
 
@@ -348,3 +404,16 @@ class Store(Protocol):
         check: Callable[[Manifest], list[str]],
     ) -> CreateReplayResult | None: ...
     def get_replay(self, replay_id: UUID) -> ReplayRecord | None: ...
+
+    def create_experiment(
+        self,
+        *,
+        principal: str,
+        route: str,
+        key: str,
+        request_hash: str,
+        config: ExperimentCreate,
+        planned: list[PlannedRun],
+        queue_cap: int,
+    ) -> CreateExperimentResult: ...
+    def get_experiment(self, experiment_id: UUID) -> ExperimentRecord | None: ...
