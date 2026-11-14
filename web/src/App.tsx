@@ -1,6 +1,7 @@
 import { type FormEvent, useMemo, useState, useSyncExternalStore } from "react";
 
 import { createApi } from "./api/client";
+import { ExperimentPage } from "./pages/ExperimentPage";
 import { RunPage } from "./pages/RunPage";
 import { RunsPage } from "./pages/RunsPage";
 import { SessionContext } from "./session";
@@ -12,6 +13,7 @@ function subscribe(notify: () => void) {
 const currentHash = () => window.location.hash;
 
 const RUN_ROUTE = /^#\/runs\/([0-9a-fA-F-]{36})$/;
+const EXPERIMENT_ROUTE = /^#\/experiments\/([0-9a-fA-F-]{36})$/;
 
 /** The token lives only in this component's state: not in URLs, storage or logs. */
 export function App() {
@@ -28,6 +30,7 @@ export function App() {
   }
 
   const runId = RUN_ROUTE.exec(hash)?.[1];
+  const experimentId = EXPERIMENT_ROUTE.exec(hash)?.[1];
 
   return (
     <>
@@ -60,7 +63,13 @@ export function App() {
           </form>
         ) : (
           <SessionContext.Provider value={session}>
-            {runId ? <RunPage key={runId} runId={runId} /> : <RunsPage />}
+            {runId ? (
+              <RunPage key={runId} runId={runId} />
+            ) : experimentId ? (
+              <ExperimentPage key={experimentId} experimentId={experimentId} />
+            ) : (
+              <RunsPage />
+            )}
           </SessionContext.Provider>
         )}
       </main>

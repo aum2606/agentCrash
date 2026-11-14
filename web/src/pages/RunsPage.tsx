@@ -155,6 +155,8 @@ export function RunsPage() {
         )}
       </section>
 
+      <OpenExperiment />
+
       <section aria-labelledby="runs">
         <h2 id="runs">Runs</h2>
         {runs.loading && <p role="status">Loading runs…</p>}
@@ -181,5 +183,32 @@ export function RunsPage() {
         )}
       </section>
     </>
+  );
+}
+
+const UUID = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/;
+
+/** The API has no experiment listing, so an experiment is opened by the id the CLI printed. */
+function OpenExperiment() {
+  const [id, setId] = useState("");
+  const bad = id.trim() !== "" && !UUID.test(id.trim());
+  return (
+    <form
+      className="form"
+      aria-labelledby="open-exp"
+      onSubmit={(e) => {
+        e.preventDefault();
+        if (UUID.test(id.trim())) window.location.hash = `#/experiments/${id.trim()}`;
+      }}
+    >
+      <h2 id="open-exp">Open an experiment</h2>
+      <Field label="Experiment id">
+        <input value={id} onChange={(e) => setId(e.target.value)} autoComplete="off" />
+      </Field>
+      {bad && <p role="alert">That is not an experiment id (a 36-character UUID).</p>}
+      <button type="submit" disabled={!UUID.test(id.trim())}>
+        Open experiment
+      </button>
+    </form>
   );
 }
