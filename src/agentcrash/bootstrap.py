@@ -223,6 +223,7 @@ def build_services(settings: Settings) -> Services:
         queue_cap=settings.queue_cap,
         create_rate_per_minute=settings.create_rate_per_minute,
         replay_check=lambda manifest: check_replayable(manifest, ADAPTERS),
+        web_dir=settings.web_dir,
     )
 
 

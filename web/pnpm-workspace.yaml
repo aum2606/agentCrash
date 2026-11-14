@@ -1,0 +1,2 @@
+# Supply-chain guard: never resolve a release younger than 7 days.
+minimumReleaseAge: 10080

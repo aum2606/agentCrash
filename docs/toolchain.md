@@ -9,8 +9,14 @@ Support/version check date: **2026-11-09**. Host: Windows 11 (Docker Desktop, Li
 | Python | 3.12 | **3.12.13** (uv-managed CPython) | `.python-version`, `requires-python = ">=3.12,<3.13"` | endoflife.date (2026-11-09): 3.12 EOL 2028-10-31, **security-fix phase only** (bug-fix support ended 2025-04-02). Latest 3.12 is 3.12.16 (2026-10-25); see deviation D-010 |
 | uv | n/a | **0.11.6** | CI `setup-uv` `version: "0.11.6"`; `uv_build>=0.11.6,<0.12` | Newest on PyPI is 0.13.7; not adopted, to keep tested==pinned (D-011) |
 | PostgreSQL | 18 | **18.6** (`postgres:18.6-trixie`) | `compose.yaml` | endoflife.date: 18 latest 18.6 (2026-08-11), EOL 2030-11-14 |
-| Node.js | 24 LTS | **24.22.2** selected for M6; local host has 24.13.0 | not locked yet (no `web/` in M0) | endoflife.date: 24 latest 24.22.2, EOL 2028-04-30. Newer LTS line 26 exists; baseline stays 24 per ADR-011 |
-| pnpm | n/a | 10.33.2 on host | not locked yet | Frontend lock deferred to M6 scaffolding |
+| Node.js | 24 LTS | **24.22.2** selected for M6; local host has 24.13.0 (used for the M6 slice 1 checks); CI `web` job uses `setup-node` `node-version: "24"` | `web/package.json` `engines` (>=24.13.0) | endoflife.date: 24 latest 24.22.2, EOL 2028-04-30. Newer LTS line 26 exists; baseline stays 24 per ADR-011 |
+| pnpm | n/a | **10.33.2** | `web/package.json` `packageManager`; `web/pnpm-lock.yaml`; CI uses corepack | `minimumReleaseAge: 10080` (7 days) in `web/pnpm-workspace.yaml`: pnpm refuses a younger release. pnpm 12.18.0 exists; not adopted (tested==pinned) |
+| React / react-dom | 19 | **19.3.1** | `web/pnpm-lock.yaml` | resolved 2026-11-14 under the 7-day rule |
+| TypeScript | 6.0 | **6.0.3** | `web/package.json` `~6.0.3` | 7.0.2 exists but `typescript-eslint` 8.72 supports `<6.1.0`; `openapi-typescript` 7.13 declares `^5.x` (peer warning, generation tested) |
+| Vite / Vitest / jsdom | 8 / 5 / 31 | **8.3.6 / 5.1.0 / 31.0.0** | `web/pnpm-lock.yaml` | newest releases (8.3.8, 31.0.1) were under 7 days old |
+| ESLint / typescript-eslint | 10 / 8 | **10.14.0 / 8.72.1** | `web/pnpm-lock.yaml` | |
+| openapi-typescript / openapi-fetch | 7 / 0.17 | **7.13.0 / 0.17.0** | `web/pnpm-lock.yaml` | generated `web/src/api/schema.d.ts`, drift-checked |
+| Playwright | n/a | not added yet | | M6 browser slice |
 | Docker Engine / Compose | n/a | 29.8.0 / 5.5.1 | host | n/a |
 
 ## Python dependencies (resolved in `uv.lock`, 47 packages)

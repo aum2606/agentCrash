@@ -11,6 +11,7 @@ import re
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Annotated, Any
 from uuid import UUID
 
@@ -27,6 +28,7 @@ from agentcrash.api.errors import (
     install_error_handlers,
 )
 from agentcrash.api.ratelimit import SlidingWindowLimiter
+from agentcrash.api.web import SecurityHeadersMiddleware, install_web
 from agentcrash.domain.canonical import canonical_hash
 from agentcrash.domain.diagnostics import (
     Diagnostic,
@@ -94,6 +96,8 @@ class Services:
     # Strict-replay preconditions, injected by the composition root. The default refuses
     # everything, so a Services built without it can never accept a replay.
     replay_check: Callable[[Manifest], list[str]] = lambda manifest: ["REPLAY_CHECK_NOT_CONFIGURED"]
+    # Built web client (``web/dist``); None serves the API only.
+    web_dir: Path | None = None
 
 
 class AgentInfo(BaseModel):
@@ -167,6 +171,7 @@ def create_app(services: Services) -> FastAPI:
         openapi_url=None,
     )
     app.add_middleware(RequestIdMiddleware)
+    app.add_middleware(SecurityHeadersMiddleware)
     install_error_handlers(app)
     limiter = SlidingWindowLimiter(services.create_rate_per_minute, 60.0, services.clock)
     bearer = HTTPBearer(auto_error=False, description="Local token from .local/token")
@@ -817,6 +822,8 @@ def create_app(services: Services) -> FastAPI:
         return build_report(str(evidence.experiment_id), evidence.config, from_evidence(evidence))
 
     app.include_router(v1)
+    if services.web_dir is not None:
+        install_web(app, services.web_dir)
 
     # --- OpenAPI: expose the raw-body request schemas under components -------------------
 

@@ -22,6 +22,11 @@ class Settings:
     create_rate_per_minute: int = 10
 
     @property
+    def web_dir(self) -> Path:
+        """Built web client (``pnpm --dir web build``); served only if it exists."""
+        return self.root / "web" / "dist"
+
+    @property
     def artifact_dir(self) -> Path:
         """Content-addressed export bundles; under the git-ignored ``.local/``."""
         return self.root / ".local" / "artifacts"
