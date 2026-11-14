@@ -1,6 +1,63 @@
 {
   "components": {
     "schemas": {
+      "AgentCounts": {
+        "additionalProperties": false,
+        "properties": {
+          "cancelled": {
+            "title": "Cancelled",
+            "type": "integer"
+          },
+          "completed": {
+            "title": "Completed",
+            "type": "integer"
+          },
+          "conclusive_pass_rate": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "errored": {
+            "title": "Errored",
+            "type": "integer"
+          },
+          "failed": {
+            "title": "Failed",
+            "type": "integer"
+          },
+          "inconclusive": {
+            "title": "Inconclusive",
+            "type": "integer"
+          },
+          "pass_rate": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "passed": {
+            "title": "Passed",
+            "type": "integer"
+          },
+          "submitted": {
+            "title": "Submitted",
+            "type": "integer"
+          },
+          "unfinished": {
+            "title": "Unfinished",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "submitted",
+          "completed",
+          "errored",
+          "cancelled",
+          "passed",
+          "failed",
+          "inconclusive",
+          "unfinished",
+          "pass_rate",
+          "conclusive_pass_rate"
+        ],
+        "title": "AgentCounts",
+        "type": "object"
+      },
       "AgentIdentity": {
         "additionalProperties": false,
         "properties": {
@@ -173,6 +230,164 @@
         "title": "Budgets",
         "type": "object"
       },
+      "ComparisonReport": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline_failures": {
+            "items": {
+              "$ref": "#/components/schemas/Pair"
+            },
+            "title": "Baseline Failures",
+            "type": "array"
+          },
+          "complete_pairs": {
+            "title": "Complete Pairs",
+            "type": "integer"
+          },
+          "counts_by_agent": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AgentCounts"
+            },
+            "propertyNames": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ]
+            },
+            "title": "Counts By Agent",
+            "type": "object"
+          },
+          "expected_pairs": {
+            "title": "Expected Pairs",
+            "type": "integer"
+          },
+          "experiment_id": {
+            "title": "Experiment Id",
+            "type": "string"
+          },
+          "fault_exposure_by_scenario": {
+            "items": {
+              "$ref": "#/components/schemas/Exposure"
+            },
+            "title": "Fault Exposure By Scenario",
+            "type": "array"
+          },
+          "gate": {
+            "$ref": "#/components/schemas/Gate"
+          },
+          "gate_policy_id": {
+            "const": "mock-release.v1",
+            "title": "Gate Policy Id",
+            "type": "string"
+          },
+          "grader_set_hash": {
+            "anyOf": [
+              {
+                "pattern": "^[0-9a-f]{64}$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Grader Set Hash"
+          },
+          "latency_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/Latency"
+            },
+            "propertyNames": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ]
+            },
+            "title": "Latency Summary",
+            "type": "object"
+          },
+          "manifest_hashes": {
+            "items": {
+              "pattern": "^[0-9a-f]{64}$",
+              "type": "string"
+            },
+            "title": "Manifest Hashes",
+            "type": "array"
+          },
+          "missing_pairs": {
+            "items": {
+              "$ref": "#/components/schemas/MissingPair"
+            },
+            "title": "Missing Pairs",
+            "type": "array"
+          },
+          "paired_completion_delta": {
+            "items": {
+              "$ref": "#/components/schemas/Delta"
+            },
+            "title": "Paired Completion Delta",
+            "type": "array"
+          },
+          "pairs": {
+            "items": {
+              "$ref": "#/components/schemas/Pair"
+            },
+            "title": "Pairs",
+            "type": "array"
+          },
+          "report_schema_version": {
+            "const": "1",
+            "title": "Report Schema Version",
+            "type": "string"
+          },
+          "safety_counts": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/SafetyCounts"
+            },
+            "propertyNames": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ]
+            },
+            "title": "Safety Counts",
+            "type": "object"
+          },
+          "usage_summary": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/UsageSummary"
+            },
+            "propertyNames": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ]
+            },
+            "title": "Usage Summary",
+            "type": "object"
+          }
+        },
+        "required": [
+          "report_schema_version",
+          "experiment_id",
+          "manifest_hashes",
+          "grader_set_hash",
+          "gate_policy_id",
+          "expected_pairs",
+          "complete_pairs",
+          "missing_pairs",
+          "counts_by_agent",
+          "fault_exposure_by_scenario",
+          "paired_completion_delta",
+          "safety_counts",
+          "latency_summary",
+          "usage_summary",
+          "pairs",
+          "baseline_failures",
+          "gate"
+        ],
+        "title": "ComparisonReport",
+        "type": "object"
+      },
       "Delay": {
         "additionalProperties": false,
         "properties": {
@@ -193,6 +408,50 @@
           "duration_ms"
         ],
         "title": "Delay",
+        "type": "object"
+      },
+      "Delta": {
+        "additionalProperties": false,
+        "description": "Candidate minus baseline pass rate over complete pairs, as an exact signed ratio.",
+        "properties": {
+          "baseline_passes": {
+            "title": "Baseline Passes",
+            "type": "integer"
+          },
+          "candidate_passes": {
+            "title": "Candidate Passes",
+            "type": "integer"
+          },
+          "delta": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "pairs": {
+            "title": "Pairs",
+            "type": "integer"
+          },
+          "scenario_id": {
+            "anyOf": [
+              {
+                "maxLength": 64,
+                "minLength": 1,
+                "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Scenario Id"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "pairs",
+          "baseline_passes",
+          "candidate_passes",
+          "delta"
+        ],
+        "title": "Delta",
         "type": "object"
       },
       "DocumentInjection": {
@@ -928,6 +1187,65 @@
         "title": "ExportRecord",
         "type": "object"
       },
+      "Exposure": {
+        "additionalProperties": false,
+        "properties": {
+          "applications": {
+            "title": "Applications",
+            "type": "integer"
+          },
+          "exposed_runs": {
+            "title": "Exposed Runs",
+            "type": "integer"
+          },
+          "exposure_rate": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "recovered": {
+            "title": "Recovered",
+            "type": "integer"
+          },
+          "recovery_eligible": {
+            "title": "Recovery Eligible",
+            "type": "integer"
+          },
+          "recovery_rate": {
+            "$ref": "#/components/schemas/Ratio"
+          },
+          "role": {
+            "enum": [
+              "baseline",
+              "candidate"
+            ],
+            "title": "Role",
+            "type": "string"
+          },
+          "runs": {
+            "title": "Runs",
+            "type": "integer"
+          },
+          "scenario_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Scenario Id",
+            "type": "string"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "role",
+          "runs",
+          "exposed_runs",
+          "applications",
+          "exposure_rate",
+          "recovery_eligible",
+          "recovered",
+          "recovery_rate"
+        ],
+        "title": "Exposure",
+        "type": "object"
+      },
       "FaultRule": {
         "additionalProperties": false,
         "properties": {
@@ -1072,6 +1390,33 @@
         "title": "Finding",
         "type": "object"
       },
+      "Gate": {
+        "additionalProperties": false,
+        "properties": {
+          "reasons": {
+            "items": {
+              "$ref": "#/components/schemas/Reason"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "incomplete"
+            ],
+            "title": "Status",
+            "type": "string"
+          }
+        },
+        "required": [
+          "status",
+          "reasons"
+        ],
+        "title": "Gate",
+        "type": "object"
+      },
       "Grade": {
         "additionalProperties": false,
         "properties": {
@@ -1213,6 +1558,134 @@
         "title": "HttpError",
         "type": "object"
       },
+      "Latency": {
+        "additionalProperties": false,
+        "properties": {
+          "logical_ms": {
+            "$ref": "#/components/schemas/Summary"
+          },
+          "wall_ms": {
+            "$ref": "#/components/schemas/Summary"
+          }
+        },
+        "required": [
+          "logical_ms",
+          "wall_ms"
+        ],
+        "title": "Latency",
+        "type": "object"
+      },
+      "MissingPair": {
+        "additionalProperties": false,
+        "properties": {
+          "missing": {
+            "items": {
+              "enum": [
+                "baseline",
+                "candidate"
+              ],
+              "type": "string"
+            },
+            "title": "Missing",
+            "type": "array"
+          },
+          "reasons": {
+            "items": {
+              "type": "string"
+            },
+            "title": "Reasons",
+            "type": "array"
+          },
+          "scenario_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "scenario_version": {
+            "title": "Scenario Version",
+            "type": "integer"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "string"
+          },
+          "trial": {
+            "title": "Trial",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "scenario_version",
+          "seed",
+          "trial",
+          "missing",
+          "reasons"
+        ],
+        "title": "MissingPair",
+        "type": "object"
+      },
+      "Pair": {
+        "additionalProperties": false,
+        "properties": {
+          "baseline": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Side"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "candidate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/Side"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "complete": {
+            "title": "Complete",
+            "type": "boolean"
+          },
+          "scenario_id": {
+            "maxLength": 64,
+            "minLength": 1,
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "title": "Scenario Id",
+            "type": "string"
+          },
+          "scenario_version": {
+            "title": "Scenario Version",
+            "type": "integer"
+          },
+          "seed": {
+            "title": "Seed",
+            "type": "string"
+          },
+          "trial": {
+            "title": "Trial",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "scenario_id",
+          "scenario_version",
+          "seed",
+          "trial",
+          "complete",
+          "baseline",
+          "candidate"
+        ],
+        "title": "Pair",
+        "type": "object"
+      },
       "Policy": {
         "additionalProperties": false,
         "properties": {
@@ -1243,6 +1716,56 @@
           "allowed_tools"
         ],
         "title": "Policy",
+        "type": "object"
+      },
+      "Ratio": {
+        "additionalProperties": false,
+        "properties": {
+          "d": {
+            "title": "D",
+            "type": "integer"
+          },
+          "n": {
+            "title": "N",
+            "type": "integer"
+          },
+          "value": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Value"
+          }
+        },
+        "required": [
+          "n",
+          "d",
+          "value"
+        ],
+        "title": "Ratio",
+        "type": "object"
+      },
+      "Reason": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "title": "Code",
+            "type": "string"
+          },
+          "detail": {
+            "title": "Detail",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "detail"
+        ],
+        "title": "Reason",
         "type": "object"
       },
       "ReplayRecord": {
@@ -1636,6 +2159,41 @@
         "title": "RunRecord",
         "type": "object"
       },
+      "SafetyCounts": {
+        "additionalProperties": false,
+        "description": "Runs (not events) with each finding. ``attempted_unsafe`` includes committed ones.",
+        "properties": {
+          "attempted_unsafe": {
+            "title": "Attempted Unsafe",
+            "type": "integer"
+          },
+          "committed_unsafe": {
+            "title": "Committed Unsafe",
+            "type": "integer"
+          },
+          "duplicate_write": {
+            "title": "Duplicate Write",
+            "type": "integer"
+          },
+          "stale_source": {
+            "title": "Stale Source",
+            "type": "integer"
+          },
+          "trace_incomplete": {
+            "title": "Trace Incomplete",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "attempted_unsafe",
+          "committed_unsafe",
+          "duplicate_write",
+          "stale_source",
+          "trace_incomplete"
+        ],
+        "title": "SafetyCounts",
+        "type": "object"
+      },
       "Scenario": {
         "additionalProperties": false,
         "properties": {
@@ -1889,6 +2447,61 @@
         "title": "ScriptedConflict",
         "type": "object"
       },
+      "Side": {
+        "additionalProperties": false,
+        "properties": {
+          "error_code": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Error Code"
+          },
+          "primary_reason": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Primary Reason"
+          },
+          "status": {
+            "title": "Status",
+            "type": "string"
+          },
+          "verdict": {
+            "anyOf": [
+              {
+                "enum": [
+                  "pass",
+                  "fail",
+                  "inconclusive"
+                ],
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Verdict"
+          }
+        },
+        "required": [
+          "status",
+          "verdict",
+          "primary_reason",
+          "error_code"
+        ],
+        "title": "Side",
+        "type": "object"
+      },
       "StaleRead": {
         "additionalProperties": false,
         "properties": {
@@ -1953,6 +2566,82 @@
           "scenario"
         ],
         "title": "StoredScenario",
+        "type": "object"
+      },
+      "Summary": {
+        "additionalProperties": false,
+        "description": "Nearest-rank percentiles over ``count`` samples; ``warning`` marks small samples, for\nwhich no statistical-confidence claim is made.",
+        "properties": {
+          "count": {
+            "title": "Count",
+            "type": "integer"
+          },
+          "max": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Max"
+          },
+          "min": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Min"
+          },
+          "p50": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P50"
+          },
+          "p95": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "P95"
+          },
+          "warning": {
+            "anyOf": [
+              {
+                "const": "SMALL_SAMPLE",
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Warning"
+          }
+        },
+        "required": [
+          "count",
+          "min",
+          "p50",
+          "p95",
+          "max",
+          "warning"
+        ],
+        "title": "Summary",
         "type": "object"
       },
       "Task": {
@@ -2045,6 +2734,35 @@
           "elapsed_ms"
         ],
         "title": "TimeoutBeforeCommit",
+        "type": "object"
+      },
+      "UsageSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "estimated_cost": {
+            "title": "Estimated Cost",
+            "type": "null"
+          },
+          "model_requests": {
+            "title": "Model Requests",
+            "type": "null"
+          },
+          "steps": {
+            "$ref": "#/components/schemas/Summary"
+          },
+          "tokens": {
+            "title": "Tokens",
+            "type": "null"
+          },
+          "tool_calls": {
+            "$ref": "#/components/schemas/Summary"
+          }
+        },
+        "required": [
+          "tool_calls",
+          "steps"
+        ],
+        "title": "UsageSummary",
         "type": "object"
       }
     },
@@ -2274,6 +2992,98 @@
           }
         ],
         "summary": "Get Experiment"
+      }
+    },
+    "/api/v1/experiments/{experiment_id}/report": {
+      "get": {
+        "operationId": "get_experiment_report_api_v1_experiments__experiment_id__report_get",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "experiment_id",
+            "required": true,
+            "schema": {
+              "title": "Experiment Id",
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "partial",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ComparisonReport"
+                }
+              }
+            },
+            "description": "Successful Response"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorEnvelope"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "security": [
+          {
+            "HTTPBearer": []
+          }
+        ],
+        "summary": "Get Experiment Report"
       }
     },
     "/api/v1/exports/{export_id}": {

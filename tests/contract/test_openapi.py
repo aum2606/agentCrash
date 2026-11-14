@@ -13,9 +13,8 @@ def spec() -> dict[str, Any]:
 
 
 # Exactly the implemented slice of the CONTRACTS.md section 3 table: M1+M2, the M4 export,
-# strict-replay and rerun routes, and experiment creation and progress. Everything else (the
-# experiment report, artifact download) belongs to later slices and must not appear as a
-# half-built route.
+# strict-replay and rerun routes, and experiment creation, progress and report. Artifact
+# download and the CLI gate belong to later slices and must not appear as half-built routes.
 M1_ROUTES = {
     ("get", "/health/live"),
     ("get", "/health/ready"),
@@ -32,6 +31,7 @@ M1_ROUTES = {
     ("post", "/api/v1/runs/{run_id}/reruns"),
     ("post", "/api/v1/experiments"),
     ("get", "/api/v1/experiments/{experiment_id}"),
+    ("get", "/api/v1/experiments/{experiment_id}/report"),
     ("post", "/api/v1/runs/{run_id}/exports"),
     ("get", "/api/v1/exports/{export_id}"),
     ("post", "/api/v1/runs/{run_id}/replays"),

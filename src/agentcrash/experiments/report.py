@@ -22,6 +22,7 @@ from decimal import ROUND_HALF_EVEN, Decimal
 
 from agentcrash.domain.canonical import canonical_hash
 from agentcrash.domain.models import ExperimentCreate
+from agentcrash.domain.ports import ExperimentEvidence
 from agentcrash.domain.report import (
     REPORT_SCHEMA_VERSION,
     AgentCounts,
@@ -72,6 +73,37 @@ class SlotRun:
 
 
 Runs = Mapping[tuple[Cell, Role], SlotRun]
+
+
+def from_evidence(evidence: ExperimentEvidence) -> Runs:
+    """Slot facts read from storage, keyed the way ``build_report`` looks them up."""
+    return {
+        (cell := Cell(e.scenario_id, e.scenario_version, e.seed, e.trial), e.role): SlotRun(
+            cell=cell,
+            role=e.role,
+            manifest_hash=e.manifest_hash,
+            scenario_hash=e.scenario_hash,
+            grader_set_hash=e.grader_set_hash,
+            versions=e.versions,
+            run_status=e.run_status,
+            error_code=e.error_code,
+            cancelled=e.cancelled,
+            verdict=e.verdict,
+            primary_reason=e.primary_reason,
+            finding_codes=e.finding_codes,
+            recovery=e.recovery,
+            fault_applications=e.fault_applications,
+            tool_calls=e.tool_calls,
+            steps=e.steps,
+            logical_ms=e.logical_ms,
+            wall_ms=e.wall_ms,
+        )
+        for e in evidence.slots
+    }
+
+
+def is_finished(evidence: ExperimentEvidence) -> bool:
+    return not any(e.run_status in UNFINISHED for e in evidence.slots)
 
 
 def ratio(n: int, d: int) -> Ratio:

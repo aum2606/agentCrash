@@ -249,6 +249,42 @@ class PlannedRun:
     manifest_hash: str
 
 
+@dataclass(frozen=True)
+class SlotEvidence:
+    """Facts about one slot's run as stored, with no judgement applied. The experiment layer
+    turns these into report inputs. ``wall_ms`` is None until the selected attempt closed."""
+
+    scenario_id: str
+    scenario_version: int
+    seed: str
+    trial: int
+    role: Literal["baseline", "candidate"]
+    run_id: UUID
+    manifest_hash: str
+    scenario_hash: str
+    grader_set_hash: str
+    versions: tuple[str, str, str]  # canonicalization, fault engine, taxonomy
+    run_status: str
+    error_code: str | None
+    cancelled: bool
+    verdict: str | None
+    primary_reason: str | None
+    finding_codes: tuple[str, ...]
+    recovery: str | None
+    fault_applications: int
+    tool_calls: int | None
+    steps: int | None
+    logical_ms: int | None
+    wall_ms: int | None
+
+
+@dataclass(frozen=True)
+class ExperimentEvidence:
+    experiment_id: UUID
+    config: ExperimentCreate
+    slots: list[SlotEvidence]
+
+
 class AttemptNotClosed(Exception):
     """The attempt is still active; its evidence is not final."""
 
@@ -417,3 +453,4 @@ class Store(Protocol):
         queue_cap: int,
     ) -> CreateExperimentResult: ...
     def get_experiment(self, experiment_id: UUID) -> ExperimentRecord | None: ...
+    def get_experiment_evidence(self, experiment_id: UUID) -> ExperimentEvidence | None: ...

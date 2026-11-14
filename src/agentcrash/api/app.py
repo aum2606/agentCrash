@@ -62,7 +62,9 @@ from agentcrash.domain.ports import (
     StoredScenario,
 )
 from agentcrash.domain.registry import Registry
+from agentcrash.domain.report import ComparisonReport
 from agentcrash.experiments.matrix import Cell, cells, expand, incompatibilities
+from agentcrash.experiments.report import build_report, from_evidence, is_finished
 from agentcrash.scenarios.compiler import compile_scenario
 from agentcrash.scenarios.loader import load_json_document, load_scenario_document
 from agentcrash.scenarios.manifest import (
@@ -793,6 +795,26 @@ def create_app(services: Services) -> FastAPI:
         if found is None:
             raise ApiError(404, "EXPERIMENT_NOT_FOUND", "No such experiment.")
         return found
+
+    @v1.get(
+        "/experiments/{experiment_id}/report",
+        response_model=ComparisonReport,
+        responses=error_responses(400, 404, 409, 422),
+        openapi_extra={"parameters": _query_docs("partial")},
+    )
+    def get_experiment_report(experiment_id: str, request: Request) -> ComparisonReport:
+        _list_params(request, {"partial"})
+        partial = request.query_params.get("partial", "false")
+        if partial not in ("true", "false"):
+            raise ApiError(400, "INVALID_PARAMETER", "partial must be true or false.")
+        evidence = services.store.get_experiment_evidence(
+            _subject_id(experiment_id, "EXPERIMENT_NOT_FOUND", "experiment")
+        )
+        if evidence is None:
+            raise ApiError(404, "EXPERIMENT_NOT_FOUND", "No such experiment.")
+        if partial == "false" and not is_finished(evidence):
+            raise ApiError(409, "EXPERIMENT_NOT_FINISHED", "Some runs are still queued or running.")
+        return build_report(str(evidence.experiment_id), evidence.config, from_evidence(evidence))
 
     app.include_router(v1)
 

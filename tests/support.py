@@ -137,6 +137,9 @@ class StubStore:
     def get_experiment(self, experiment_id: UUID) -> Any:
         return self._unexpected("get_experiment")
 
+    def get_experiment_evidence(self, experiment_id: UUID) -> Any:
+        return self._unexpected("get_experiment_evidence")
+
 
 class FakeClock:
     def __init__(self) -> None:
