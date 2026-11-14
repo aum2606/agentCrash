@@ -130,3 +130,11 @@ fieldset {
     grid-template-columns: 1fr;
   }
 }
+
+.events { list-style: none; padding: 0; }
+.event { border-left: 3px solid currentColor; padding: 0 0 0 0.75rem; margin: 0 0 1rem; }
+.event.focused { outline: 2px solid currentColor; outline-offset: 2px; }
+.badge { font-weight: 600; border: 1px solid currentColor; border-radius: 4px; padding: 0 0.3rem; }
+pre { overflow-x: auto; }
+table { border-collapse: collapse; display: block; overflow-x: auto; }
+th, td { border: 1px solid currentColor; padding: 0.25rem 0.5rem; text-align: left; vertical-align: top; }

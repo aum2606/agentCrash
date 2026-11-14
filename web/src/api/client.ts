@@ -6,6 +6,8 @@ export type Run = components["schemas"]["RunRecord"];
 export type RunCreate = components["schemas"]["RunCreate"];
 export type ScenarioSummary = components["schemas"]["ScenarioSummary"];
 export type AgentInfo = components["schemas"]["AgentInfo"];
+export type EventRecord = components["schemas"]["EventRecord"];
+export type Evaluation = components["schemas"]["EvaluationRecord"];
 export type Budgets = components["schemas"]["Budgets"];
 
 /** Everything the UI can fail on, in one shape: `kind` tells infrastructure from API errors. */

@@ -30,6 +30,7 @@ export function makeRun(over: Partial<Run> = {}): Run {
 export interface Seen {
   method: string;
   path: string;
+  query: URLSearchParams;
   authorization: string | null;
   idempotency: string | null;
   body: unknown;
@@ -59,6 +60,7 @@ export function mockApi(routes: Record<string, Handler>) {
       const entry: Seen = {
         method: input.method,
         path: url.pathname,
+        query: url.searchParams,
         authorization: input.headers.get("authorization"),
         idempotency: input.headers.get("idempotency-key"),
         body: input.method === "POST" ? await input.clone().json().catch(() => null) : null,

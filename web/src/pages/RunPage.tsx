@@ -4,6 +4,7 @@ import { ACTIVE, type ApiProblem, type Run, call, toProblem } from "../api/clien
 import { Pair, Problem, Status } from "../components";
 import { useSession } from "../session";
 import { usePoll } from "../usePoll";
+import { Timeline } from "./Timeline";
 
 // One second while the run can still change, five when it cannot (CONTRACTS section 2).
 const delay = (run: Run) => (ACTIVE.has(run.status) ? 1000 : 5000);
@@ -34,6 +35,8 @@ export function RunPage({ runId }: { runId: string }) {
       setCancelling(false);
     }
   }
+
+  const attemptId = run?.selected_attempt_id ?? run?.attempts.at(-1)?.id;
 
   return (
     <section aria-labelledby="run-title">
@@ -76,6 +79,9 @@ export function RunPage({ runId }: { runId: string }) {
             </button>
           )}
           {cancelError && <Problem error={cancelError} />}
+          {attemptId && (
+            <Timeline api={api} runId={runId} attemptId={attemptId} active={ACTIVE.has(run.status)} />
+          )}
         </>
       )}
     </section>
