@@ -11,6 +11,8 @@ export type Evaluation = components["schemas"]["EvaluationRecord"];
 export type Experiment = components["schemas"]["ExperimentRecord"];
 export type Report = components["schemas"]["ComparisonReport"];
 export type Ratio = components["schemas"]["Ratio"];
+export type ReplayJob = components["schemas"]["ReplayRecord"];
+export type ExportJob = components["schemas"]["ExportRecord"];
 export type Budgets = components["schemas"]["Budgets"];
 
 /** Everything the UI can fail on, in one shape: `kind` tells infrastructure from API errors. */

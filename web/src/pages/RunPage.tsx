@@ -4,6 +4,7 @@ import { ACTIVE, type ApiProblem, type Run, call, toProblem } from "../api/clien
 import { Pair, Problem, Status } from "../components";
 import { useSession } from "../session";
 import { usePoll } from "../usePoll";
+import { Actions } from "./Actions";
 import { Timeline } from "./Timeline";
 
 // One second while the run can still change, five when it cannot (CONTRACTS section 2).
@@ -79,6 +80,9 @@ export function RunPage({ runId }: { runId: string }) {
             </button>
           )}
           {cancelError && <Problem error={cancelError} />}
+          {attemptId && !ACTIVE.has(run.status) && run.attempts.find((a) => a.id === attemptId)?.termination && (
+            <Actions api={api} run={run} attemptId={attemptId} />
+          )}
           {attemptId && (
             <Timeline api={api} runId={runId} attemptId={attemptId} active={ACTIVE.has(run.status)} />
           )}
