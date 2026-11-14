@@ -84,3 +84,12 @@ def test_json_depth_is_rejected_before_parsing_so_it_is_platform_independent() -
 def test_json_brackets_inside_strings_do_not_count_as_depth() -> None:
     doc = loader.load_json_document(b'{"a": "' + b"[" * 500 + b'\\"[", "b": {"c": 1}}')
     assert doc["b"] == {"c": 1}
+
+
+def test_a_suite_file_is_an_experiment_request_not_a_scenario() -> None:
+    from pathlib import Path
+
+    from agentcrash.scenarios.loader import scenario_files
+
+    found = scenario_files([Path("v1/suite.yaml"), Path("v1/b.yaml"), Path("v1/a.yaml")])
+    assert [p.name for p in found] == ["a.yaml", "b.yaml"]

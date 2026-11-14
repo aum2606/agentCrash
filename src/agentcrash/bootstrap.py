@@ -27,7 +27,7 @@ from agentcrash.environments.invoice import catalog
 from agentcrash.environments.invoice.fixture import load_bundle
 from agentcrash.replay.service import check_replayable
 from agentcrash.scenarios.compiler import compile_scenario
-from agentcrash.scenarios.loader import load_scenario_document
+from agentcrash.scenarios.loader import load_scenario_document, scenario_files
 from agentcrash.settings import Settings, load_settings
 from agentcrash.storage.attempts import AttemptRepo
 from agentcrash.storage.engine import make_engine
@@ -274,7 +274,7 @@ def dev_init(settings: Settings) -> InitReport:
             spec.id, spec.version, spec.id, schema_hash, spec.source_hash
         )
     created = unchanged = 0
-    for path in sorted((settings.root / "scenarios").rglob("*.yaml")):
+    for path in scenario_files((settings.root / "scenarios").rglob("*.yaml")):
         compiled = compile_scenario(load_scenario_document(path.read_bytes()), services.registry)
         if services.store.put_scenario(compiled).created:
             created += 1

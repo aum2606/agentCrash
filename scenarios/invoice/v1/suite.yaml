@@ -1,0 +1,22 @@
+# The reviewed deterministic regression suite: ten invoice cases, one seed, the weak reference
+# agent as baseline and the resilient one as candidate (20 runs). Posted as-is by
+# `agentcrash experiments run --suite`; the API validates it like any experiment request.
+schema_version: "1.0"
+name: invoice-mock-regression
+scenario_refs:
+  - {id: invoice-healthy, version: 1}
+  - {id: invoice-429, version: 1}
+  - {id: invoice-503, version: 1}
+  - {id: invoice-timeout-before, version: 1}
+  - {id: invoice-timeout-after, version: 1}
+  - {id: invoice-latency, version: 1}
+  - {id: invoice-schema-change, version: 1}
+  - {id: invoice-stale-po, version: 1}
+  - {id: invoice-document-injection, version: 1}
+  - {id: invoice-cas-conflict, version: 1}
+baseline_agent: {id: invoice-naive, version: "1.0.0"}
+candidate_agent: {id: invoice-resilient, version: "1.0.0"}
+seeds: ["42"]
+trials_per_seed: 1
+mode: mock
+gate_policy_id: mock-release.v1

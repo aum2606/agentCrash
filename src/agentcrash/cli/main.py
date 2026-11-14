@@ -1,4 +1,5 @@
-"""CLI entry point: version, api, check, scenarios validate, dev init, playback, replay."""
+"""CLI entry point: version, api, check, scenarios validate, dev init, playback, replay,
+experiments."""
 
 import ipaddress
 import json
@@ -15,18 +16,20 @@ from agentcrash import __version__
 from agentcrash.agents.registry import ADAPTERS
 from agentcrash.agents.rng import SeededRng
 from agentcrash.bootstrap import alembic_head, build_worker, default_registry, dev_init, read_token
+from agentcrash.cli.experiments import experiments_app
 from agentcrash.domain.diagnostics import ValidationFailed
 from agentcrash.replay.bundle import Bundle, BundleError, read_bundle
 from agentcrash.replay.engine import NotReplayable
 from agentcrash.replay.playback import playback_report, render_text, sanitize
 from agentcrash.replay.service import Incompatible, replay_recorded
 from agentcrash.scenarios.compiler import compile_scenario
-from agentcrash.scenarios.loader import load_scenario_document
+from agentcrash.scenarios.loader import load_scenario_document, scenario_files
 from agentcrash.settings import load_settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 scenarios_app = typer.Typer(no_args_is_help=True, help="Scenario tools.")
 app.add_typer(scenarios_app, name="scenarios")
+app.add_typer(experiments_app, name="experiments")
 dev_app = typer.Typer(no_args_is_help=True, help="Local development setup.")
 app.add_typer(dev_app, name="dev")
 
@@ -102,7 +105,9 @@ def scenarios_validate(
     """Compile scenarios offline. Exit 0 all valid, 1 some invalid, 2 operational error."""
     try:
         registry = default_registry(root)
-        files = sorted([path] if path.is_file() else [*path.rglob("*.yaml"), *path.rglob("*.yml")])
+        files = scenario_files(
+            [path] if path.is_file() else [*path.rglob("*.yaml"), *path.rglob("*.yml")]
+        )
         if not files:
             raise FileNotFoundError(f"no scenario files under {path}")
         results = []

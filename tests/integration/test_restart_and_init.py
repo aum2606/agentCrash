@@ -17,12 +17,13 @@ from typer.testing import CliRunner
 
 from agentcrash.bootstrap import dev_init
 from agentcrash.cli.main import app as cli
+from agentcrash.scenarios.loader import scenario_files
 from agentcrash.settings import Settings
 
 from .helpers import ROOT
 
 TOKEN = "r" * 43
-N_SCENARIOS = len(list((ROOT / "scenarios" / "invoice" / "v1").rglob("*.yaml")))
+N_SCENARIOS = len(scenario_files((ROOT / "scenarios" / "invoice" / "v1").rglob("*.yaml")))
 SCENARIO_YAML = (ROOT / "scenarios" / "invoice" / "v1" / "invoice-429.yaml").read_bytes()
 RUN = {
     "schema_version": "1.0",

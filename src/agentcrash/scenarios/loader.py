@@ -7,6 +7,8 @@ Errors carry stable codes and never echo document content.
 """
 
 import json
+from collections.abc import Iterable
+from pathlib import Path
 from typing import Any
 
 import yaml
@@ -197,3 +199,12 @@ def load_json_document(
     if (limit := _within_limits(doc)) is not None:
         raise _fail(limit, error=error)
     return doc
+
+
+# The experiment request that lives next to the scenarios it names; it is not a scenario.
+SUITE_FILE = "suite.yaml"
+
+
+def scenario_files(paths: Iterable[Path]) -> list[Path]:
+    """Sorted scenario documents among ``paths``; a suite file is a request, not a scenario."""
+    return sorted(p for p in paths if p.name != SUITE_FILE)

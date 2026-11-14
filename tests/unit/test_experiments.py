@@ -482,3 +482,25 @@ def test_each_pair_says_whether_it_is_complete() -> None:
     assert flags["invoice-429"] is False and sum(flags.values()) == 9
     missing = next(p for p in r.pairs if p.scenario_id == "invoice-429")
     assert missing.candidate is None and missing.baseline is not None
+
+
+def test_baseline_view_drops_everything_machine_specific_and_diffs_readably() -> None:
+    from agentcrash.experiments.baseline import baseline_of, differences
+
+    report = {
+        "experiment_id": "x",
+        "manifest_hashes": ["h"],
+        "grader_set_hash": "g",
+        "gate": {"status": "pass", "reasons": []},
+        "latency_summary": {"candidate": {"logical_ms": {"p50": 5}, "wall_ms": {"p50": 123}}},
+    }
+    view = baseline_of(report)
+    assert view == {
+        "baseline_schema_version": "1",
+        "gate": {"status": "pass", "reasons": []},
+        "latency_summary": {"candidate": {"logical_ms": {"p50": 5}}},
+    }
+    changed = {**view, "gate": {"status": "fail", "reasons": []}}
+    assert differences(view, view) == []
+    assert differences(view, changed) == ["/gate/status: expected 'pass', found 'fail'"]
+    assert differences({"a": [1, 2]}, {"a": [1]}) == ["/a: 2 items expected, 1 found"]
